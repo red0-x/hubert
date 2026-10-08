@@ -124,10 +124,26 @@
   }
 }
 
+.hubert-mascot-drag {
+  position: fixed;
+  z-index: 30;
+  width: min(56px, 100vw);
+  height: min(56px, 100vh);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.hubert-mascot-drag:active { cursor: grabbing; }
+.hubert-mascot-drag:focus-visible { outline: 2px solid var(--ring); border-radius: 8px; }
+.hubert-mascot-drag img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+
 @media (prefers-reduced-motion: no-preference) {
-  .hubert-mascot {
-    animation: hubert-bob 4s ease-in-out infinite;
-  }
+  .hubert-mascot-drag { transition: left 3s ease-in-out, top 3s ease-in-out; }
+  .hubert-mascot-drag:active { transition: none; }
+  .hubert-mascot { animation: hubert-bob 4s ease-in-out infinite; }
 }
 
 @keyframes hubert-bob {
