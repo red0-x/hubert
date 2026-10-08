@@ -1,5 +1,8 @@
 import index from "./src/index.html";
 import { collect } from "./state";
+import { sttStatus, transcribe } from "./voice/stt";
+
+const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
 const PORT = Number(process.env.HUBERT_PORT ?? 7777);
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
@@ -37,6 +40,22 @@ const server = Bun.serve({
   routes: {
     "/": index,
     "/api/state": (req) => guard(req) ?? Response.json(collect()),
+    "/api/stt": (req) => guard(req) ?? Response.json(sttStatus()),
+    "/api/transcribe": {
+      POST: async (req) => {
+        const denied = guard(req);
+        if (denied) return denied;
+        const mime = req.headers.get("content-type") ?? "";
+        if (!mime.startsWith("audio/")) return new Response("expected audio/*", { status: 415 });
+        const audio = new Uint8Array(await req.arrayBuffer());
+        if (!audio.length || audio.length > MAX_AUDIO_BYTES) return new Response("audio empty or over 10 MB", { status: 413 });
+        try {
+          return Response.json(await transcribe(audio, mime));
+        } catch (e) {
+          return new Response((e as Error).message, { status: 502 });
+        }
+      },
+    },
     "/api/lazygit": {
       POST: async (req) => {
         const denied = guard(req);

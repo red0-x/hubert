@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "agentdeck",
+      "name": "hubert",
       "dependencies": {
         "bun-plugin-tailwind": "^0.1.2",
         "class-variance-authority": "^0.7.1",

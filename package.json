@@ -1,5 +1,5 @@
 {
-  "name": "agentdeck",
+  "name": "hubert",
   "type": "module",
   "private": true,
   "devDependencies": {
@@ -27,5 +27,12 @@
     "dev": "bun --hot server.ts",
     "start": "NODE_ENV=production bun server.ts",
     "test": "bun test"
-  }
+  },
+  "license": "MIT",
+  "description": "Live dashboard and voice control for coding agents (jcode, Claude Code)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/red0-x/hubert.git"
+  },
+  "homepage": "https://github.com/red0-x/hubert"
 }

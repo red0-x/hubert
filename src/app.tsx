@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BotIcon, GitBranchIcon, GitCompareIcon, TerminalIcon } from "lucide-react";
+import { BotIcon, GitBranchIcon, GitCompareIcon, MicIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { Agent, Repo } from "../state";
+import { describe, parseIntent } from "../voice/intent";
+import { useVoice } from "./use-voice";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -122,6 +124,16 @@ function App() {
   const [s, setS] = useState<State | null>(null);
   const [stale, setStale] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
+  const known = useRef({ agents: [] as string[], repos: [] as string[] });
+
+  const voice = useVoice(
+    useCallback((text: string, connector: string) => {
+      const intent = parseIntent(text, known.current);
+      // Actions (focus/open/send) are not wired yet, so show what hubert understood.
+      toast(`“${text}”`, { description: `${describe(intent)} \u00b7 ${connector}` });
+    }, []),
+    useCallback((msg: string) => toast.error(msg), []),
+  );
 
   useEffect(() => {
     let on = true;
@@ -150,6 +162,9 @@ function App() {
   const roots = visible.filter((a) => !a.parent || !ids.has(a.parent));
   const kids = (id: string) => visible.filter((a) => a.parent === id);
   const working = s.agents.filter((a) => a.state === "working").length;
+  known.current = { agents: s.agents.filter((a) => a.state === "working" || a.state === "idle").map((a) => a.name), repos: s.repos.map((r) => r.name) };
+  const micOff = !voice.stt?.active;
+  const micTip = voice.stt?.active ? `Hold to talk (${voice.stt.active})` : "No speech-to-text connector configured, see README";
 
   return (
     <div className="flex h-svh flex-col">
@@ -158,6 +173,24 @@ function App() {
         <Badge variant={working ? "default" : "secondary"}>{working} working</Badge>
         {stale && <Badge variant="destructive">stale</Badge>}
         <div className="ml-auto flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  size="icon"
+                  variant={voice.state === "listening" ? "default" : "outline"}
+                  disabled={micOff || voice.state === "transcribing"}
+                  aria-label="Hold to talk"
+                  onPointerDown={voice.start}
+                  onPointerUp={voice.stop}
+                  onPointerLeave={voice.stop}
+                >
+                  {voice.state === "transcribing" ? <Spinner /> : <MicIcon className={voice.state === "listening" ? "animate-pulse" : ""} />}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{micTip}</TooltipContent>
+          </Tooltip>
           <Switch id="closed" size="sm" checked={showClosed} onCheckedChange={setShowClosed} />
           <Label htmlFor="closed" className="text-xs text-muted-foreground">
             closed
