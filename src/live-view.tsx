@@ -111,7 +111,10 @@ export function ChangeMap({ repos, onSelect }: { repos: Repo[]; onSelect: (s: No
       })}
     </svg> : <p className="text-xs text-muted-foreground">No changed files to map.</p>}
       {active.length > 0 && <ul className="mt-3 text-xs text-muted-foreground">{active.flatMap(r => [
-        ...r.agents.map(agent => <li key={`${r.root}/${agent}`}>{agent} → {r.name} → commands: {commands.filter(c => c.agent === agent).length}</li>),
+        ...r.agents.map(agent => <li key={`${r.root}/${agent}`}>{agent} → {r.name}: {commands.filter(c => c.agent === agent).length} completed commands
+          <ul className="ml-4 list-disc">{commands.filter(c => c.agent === agent).slice(0, 5).map((c, i) =>
+            <li key={`${c.ts}-${i}`}>{agent} → <code className="break-all">{c.command.slice(0, 120)}</code> {c.ok ? "✓" : "failed"}</li>)}</ul>
+        </li>),
         ...r.files.map(f => <li key={`${r.root}/${f.path}`}>{r.name} → {f.path}: {events.filter(e => e.root === r.root && e.path === f.path).length} observed edits</li>),
       ])}</ul>}
     </CardContent>

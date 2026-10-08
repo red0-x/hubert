@@ -43,6 +43,7 @@ const server = Bun.serve({
   development: process.env.NODE_ENV !== "production",
   routes: {
     "/": index,
+    "/docs/mascot.png": (req) => guard(req) ?? new Response(Bun.file("./docs/mascot.png"), { headers: { "content-type": "image/png" } }),
     "/api/state": (req) => guard(req) ?? Response.json(collect()),
     "/api/commands": (req) => guard(req) ?? Response.json(recentCommands()),
     "/api/edits": (req) => guard(req) ?? Response.json(editEvents(collect().repos)),

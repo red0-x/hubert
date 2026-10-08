@@ -194,6 +194,7 @@ function App() {
   return (
     <div className="flex h-svh flex-col">
       <header className="flex items-center gap-2 px-4 py-3">
+        <img src="/docs/mascot.png" alt="Hubert, the pink bespectacled blubber fish" className="hubert-mascot size-8 object-contain" />
         <h1 className="font-semibold">hubert</h1>
         <Badge variant={working ? "default" : "secondary"}>{working} working</Badge>
         {stale && <Badge variant="destructive">stale</Badge>}
