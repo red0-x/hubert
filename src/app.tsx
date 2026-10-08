@@ -4,6 +4,7 @@ import { BotIcon, GitBranchIcon, GitCompareIcon, MicIcon, TerminalIcon } from "l
 import { toast } from "sonner";
 import type { Agent, Repo } from "../state";
 import { useVoice } from "./use-voice";
+import { ChangeMap, CommandsView, DiffView } from "./live-view";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,7 +69,8 @@ function AgentRow({ a, now, child }: { a: Agent; now: number; child?: boolean })
         <span className={cn("size-2 shrink-0 rounded-full", DOT[a.state])} aria-label={a.state} />
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="truncate font-medium">{a.name}</span>
+            <button className="truncate font-medium hover:underline disabled:no-underline" disabled={a.source !== "jcode" || (a.state !== "idle" && a.state !== "working")}
+              onClick={() => void runAction({ type: "focus", agent: a.name, needsConfirm: false }, false)}>{a.name}</button>
           </TooltipTrigger>
           {a.title && <TooltipContent className="max-w-xs">{a.title}</TooltipContent>}
         </Tooltip>
@@ -93,7 +95,7 @@ async function openLazygit(root: string) {
   if (!r?.ok) toast.error(r ? await r.text() : "server down");
 }
 
-function RepoCard({ r }: { r: Repo }) {
+function RepoCard({ r, showDiff }: { r: Repo; showDiff: (root: string, path: string) => void }) {
   return (
     <Card size="sm">
       <CardHeader>
@@ -119,9 +121,9 @@ function RepoCard({ r }: { r: Repo }) {
                 <Badge variant={STATUS_VARIANT[f.status] ?? "outline"} className="w-7 justify-center">
                   {f.status}
                 </Badge>
-                <span className="truncate" title={f.path}>
+                <button className="truncate text-left hover:underline focus-visible:underline" title={`Show diff for ${f.path}`} onClick={() => showDiff(r.root, f.path)}>
                   {f.path}
-                </span>
+                </button>
                 <span className="ml-auto flex shrink-0 gap-1 tabular-nums">
                   {f.add > 0 && <span>+{f.add}</span>}
                   {f.del > 0 && <span className="text-destructive">-{f.del}</span>}
@@ -152,6 +154,8 @@ function App() {
   const [s, setS] = useState<State | null>(null);
   const [stale, setStale] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
+  const [view, setView] = useState<"agents" | "map" | "commands" | "diff">("agents");
+  const [selectedFile, setSelectedFile] = useState<{ root: string; path: string } | null>(null);
   const voice = useVoice(
     handleSpeech,
     useCallback((msg: string) => toast.error(msg), []),
@@ -219,8 +223,18 @@ function App() {
         </div>
       </header>
       <Separator />
+      <nav aria-label="Hubert panels" className="flex gap-1 px-4 py-2">
+        {(["agents", "map", "commands", "diff"] as const).map((tab) =>
+          <Button key={tab} aria-pressed={view === tab} variant={view === tab ? "secondary" : "ghost"} size="sm" onClick={() => setView(tab)}>
+            {tab === "agents" ? "Agents" : tab === "map" ? "Change map" : tab === "commands" ? "Commands" : "Live diff"}
+          </Button>)}
+      </nav>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-4 p-4">
+          {view === "commands" && <CommandsView />}
+          {view === "map" && <ChangeMap repos={s.repos} onSelect={(file) => { setSelectedFile(file); setView("diff"); }} />}
+          {view === "diff" && <DiffView repos={s.repos} selected={selectedFile} onSelect={setSelectedFile} />}
+          {view === "agents" && <>
           <Card size="sm">
             <CardHeader>
               <CardTitle>Agents</CardTitle>
@@ -248,13 +262,14 @@ function App() {
             </CardContent>
           </Card>
           {s.repos.map((r) => (
-            <RepoCard key={r.root} r={r} />
+            <RepoCard key={r.root} r={r} showDiff={(root, path) => { setSelectedFile({ root, path }); setView("diff"); }} />
           ))}
           {!s.repos.length && roots.length > 0 && (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <GitCompareIcon className="size-4" /> No live agent is inside a git repo.
             </p>
           )}
+          </>}
         </div>
       </ScrollArea>
       <Toaster />

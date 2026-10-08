@@ -1,5 +1,6 @@
 import index from "./src/index.html";
 import { collect } from "./state";
+import { fileDiff, recentCommands } from "./live";
 import { sttStatus, transcribe } from "./voice/stt";
 import { brainStatus, intentToAction, plan, type Action } from "./voice/brain";
 import { NEEDS_CONFIRM, execute } from "./voice/actions";
@@ -43,6 +44,18 @@ const server = Bun.serve({
   routes: {
     "/": index,
     "/api/state": (req) => guard(req) ?? Response.json(collect()),
+    "/api/commands": (req) => guard(req) ?? Response.json(recentCommands()),
+    "/api/diff": (req) => {
+      const denied = guard(req);
+      if (denied) return denied;
+      const params = new URL(req.url).searchParams;
+      const root = params.get("root") ?? "";
+      const file = params.get("file") ?? "";
+      if (!collect().repos.some((r) => r.root === root && r.files.some((f) => f.path === file)))
+        return new Response("unknown changed file", { status: 400 });
+      try { return new Response(fileDiff(root, file).slice(0, 200_000), { headers: { "content-type": "text/plain; charset=utf-8" } }); }
+      catch (e) { return new Response((e as Error).message, { status: 400 }); }
+    },
     "/api/stt": (req) => guard(req) ?? Response.json(sttStatus()),
     "/api/transcribe": {
       POST: async (req) => {

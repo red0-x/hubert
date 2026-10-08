@@ -24,6 +24,12 @@ bun install
 
 Dev: `bun dev` (hot reload), `bun test`.
 
+## Panels
+
+Switch between **Agents**, **Change map**, **Commands**, and **Live diff** in the dashboard. Switching panels does not close browser tabs or agent sessions. Click a running jcode agent name to select its tmux window, or click a changed file in Agents/Change map to open its diff.
+
+The map connects repositories to changed files. Commands shows completed Bash calls from recent jcode and Claude Code journals, including failures and duration when available. The file list, commands, and selected diff refresh every 1.5 seconds. Diff is against `HEAD`; untracked files show their contents. These read-only views are local to Hubert, not Obsidian vault files. The map does not yet attribute individual file edits to agents.
+
 ## Configuration
 
 All optional, set as environment variables.
