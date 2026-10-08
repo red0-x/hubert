@@ -16,13 +16,14 @@ test("recentCommands joins only completed bash calls across recent sessions", ()
       { append_messages: [{ role: "user", tool_duration_ms: 23, content: [{ type: "tool_result", tool_use_id: "one", content: "ok" }] }] },
     ];
     writeFileSync(join(j, "session.journal.jsonl"), lines.map(x => JSON.stringify(x)).join("\n") + "\n");
+    writeFileSync(join(j, "session.json"), JSON.stringify({ short_name: "turtle" }));
     writeFileSync(join(c, "project", "session.jsonl"), [
       { type: "assistant", timestamp: "2026-10-08T05:00:00Z", message: { content: [{ type: "tool_use", id: "two", name: "Bash", input: { command: "false", description: "fail" } }] } },
       { type: "user", timestamp: "2026-10-08T05:00:01Z", message: { content: [{ type: "tool_result", tool_use_id: "two", is_error: true, content: "failed" }] } },
     ].map(x => JSON.stringify(x)).join("\n") + "\n");
     const commands = recentCommands(j, c);
     expect(commands.map(x => x.command).sort()).toEqual(["echo one", "false"]);
-    expect(commands.find(x => x.command === "echo one")).toMatchObject({ agent: "session", source: "jcode", ok: true, duration_ms: 23, intent: "say one" });
+    expect(commands.find(x => x.command === "echo one")).toMatchObject({ agent: "turtle", source: "jcode", ok: true, duration_ms: 23, intent: "say one" });
     expect(commands.find(x => x.command === "false")).toMatchObject({ source: "claude", ok: false, error: "failed", duration_ms: 1000 });
   } finally { rmSync(base, { recursive: true, force: true }); }
 });

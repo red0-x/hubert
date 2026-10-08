@@ -101,16 +101,22 @@ export function recentCommands(
     try {
       const pending = new Map<string, Command>();
       const fallback = statSync(path).mtimeMs;
+      let agent = basename(path).replace(/\.journal\.jsonl$|\.jsonl$/, "");
+      if (source === "jcode") {
+        try { agent = JSON.parse(readFileSync(path.replace(/\.journal\.jsonl$/, ".json"), "utf8")).short_name ?? agent; } catch {}
+      }
       for (const line of tail(path).split("\n")) {
         let event: any;
         try { event = JSON.parse(line); } catch { continue; }
+        if (source === "jcode") agent = event.meta?.short_name ?? agent;
+        else if (event.cwd) agent = `cc-${basename(event.cwd)}-${basename(path).slice(0, 4)}`;
         const messages = source === "jcode" ? event.append_messages ?? [] : [event.message];
         const timestamp = Date.parse(event.timestamp ?? "") || fallback;
         for (const message of messages) {
           if (!Array.isArray(message?.content)) continue;
           for (const block of message.content) {
             if (block.type === "tool_use" && (block.name === "bash" || block.name === "Bash") && typeof block.input?.command === "string" && typeof block.id === "string") {
-              pending.set(block.id, { agent: basename(path).replace(/\.journal\.jsonl$|\.jsonl$/, ""), source, tool: block.name, command: block.input.command, intent: block.input.intent ?? block.input.description, ok: true, ts: timestamp });
+              pending.set(block.id, { agent, source, tool: block.name, command: block.input.command, intent: block.input.intent ?? block.input.description, ok: true, ts: timestamp });
             } else if (block.type === "tool_result" && pending.has(block.tool_use_id)) {
               const command = pending.get(block.tool_use_id)!;
               pending.delete(block.tool_use_id);
