@@ -1,9 +1,9 @@
 import index from "./src/index.html";
 import { collect } from "./state";
-import { fileDiff, recentCommands } from "./live";
+import { editEvents, fileDiff, recentCommands } from "./live";
 import { sttStatus, transcribe } from "./voice/stt";
 import { brainStatus, intentToAction, plan, type Action } from "./voice/brain";
-import { NEEDS_CONFIRM, execute } from "./voice/actions";
+import { NEEDS_CONFIRM, execute, listWindows } from "./voice/actions";
 import { describe, parseIntent } from "./voice/intent";
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
@@ -45,6 +45,7 @@ const server = Bun.serve({
     "/": index,
     "/api/state": (req) => guard(req) ?? Response.json(collect()),
     "/api/commands": (req) => guard(req) ?? Response.json(recentCommands()),
+    "/api/edits": (req) => guard(req) ?? Response.json(editEvents(collect().repos)),
     "/api/diff": (req) => {
       const denied = guard(req);
       if (denied) return denied;
@@ -85,10 +86,11 @@ const server = Bun.serve({
         const known = { agents: live.map((a) => a.name), repos: s.repos.map((r) => r.name) };
         const intent = parseIntent(text, known);
         const act = intentToAction(intent);
-        const withFlags = (actions: Action[]) => actions.map((a) => ({ ...a, needsConfirm: NEEDS_CONFIRM.has(a.type) }));
+        const windows = listWindows();
+        const withFlags = (actions: Action[]) => actions.map((a) => ({ ...a, needsConfirm: NEEDS_CONFIRM.has(a.type), ...("address" in a ? { targetTitle: windows.find(w => w.address === a.address)?.title ?? "Window unavailable" } : {}) }));
         if (act) return Response.json({ say: describe(intent), actions: withFlags([act]), dropped: [], via: "grammar" });
         try {
-          const p = await plan(text, live, known.repos);
+          const p = await plan(text, live, known.repos, windows);
           return Response.json({ say: p.say, actions: withFlags(p.actions), dropped: p.dropped, via: p.model });
         } catch (e) {
           return new Response((e as Error).message, { status: 502 });
@@ -106,8 +108,7 @@ const server = Bun.serve({
         const live = s.agents.filter((a) => a.state === "working" || a.state === "idle").map((a) => a.name);
         if ("agent" in action && !live.includes(action.agent)) return new Response(`unknown agent ${String(action.agent)}`, { status: 400 });
         if (action.type === "send" && (typeof action.text !== "string" || !action.text.trim() || action.text.length > 2000)) return new Response("bad text", { status: 400 });
-        if (!["focus", "send", "status", "open"].includes(action.type)) return new Response("unsupported action", { status: 400 });
-        if (action.type === "open" && action.repo !== undefined && !s.repos.some((r) => r.name === action.repo)) return new Response(`unknown repo ${String(action.repo)}`, { status: 400 });
+        if (!["focus", "send", "status", "move", "resize"].includes(action.type)) return new Response("unsupported action", { status: 400 });
         if (NEEDS_CONFIRM.has(action.type) && confirmed !== true) return new Response("this action needs confirmed: true", { status: 409 });
         try {
           return Response.json({ result: execute(action) });

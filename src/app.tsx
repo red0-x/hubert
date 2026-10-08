@@ -20,9 +20,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 
 type State = { now: number; agents: Agent[]; repos: Repo[] };
 
-type PlanAction = { type: string; agent?: string; repo?: string; text?: string; prompt?: string; needsConfirm: boolean };
+type PlanAction = { type: string; agent?: string; text?: string; address?: string; x?: number; y?: number; width?: number; height?: number; targetTitle?: string; needsConfirm: boolean };
 const label = (a: PlanAction) =>
-  a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "open" ? `Open new agent${a.repo ? ` in ${a.repo}` : ""}${a.prompt ? ` (${a.prompt})` : ""}` : a.type === "focus" ? `Focus ${a.agent}` : `Status of ${a.agent}`;
+  a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "move" ? `Move ${a.targetTitle ?? a.address} (${a.address}) to ${a.x}, ${a.y}` : a.type === "resize" ? `Resize ${a.targetTitle ?? a.address} (${a.address}) to ${a.width} × ${a.height}` : a.type === "focus" ? `Focus ${a.agent}` : `Status of ${a.agent}`;
 
 async function runAction(a: PlanAction, confirmed: boolean) {
   const { needsConfirm, ...action } = a;
@@ -33,7 +33,7 @@ async function runAction(a: PlanAction, confirmed: boolean) {
   toast.success((JSON.parse(body) as { result: string }).result);
 }
 
-/** Transcript -> plan (grammar first, light model otherwise). Focus/status run now; send/open wait for a click. */
+/** Transcript -> plan (grammar first, light model otherwise). Mutations wait for a click. */
 async function handleSpeech(text: string, connector: string) {
   const id = toast.loading(`“${text}”`, { description: "Thinking…" });
   const r = await fetch("/api/voice", { method: "POST", body: JSON.stringify({ text }) }).catch(() => null);

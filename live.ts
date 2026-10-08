@@ -14,6 +14,54 @@ export type Command = {
   ts: number;
 };
 
+export type EditEvent = { agent: string; root: string; path: string; ts: number };
+
+/** Count actual file-edit tool calls in recent journal tails, not git status snapshots. */
+export function editEvents(repos: { root: string }[],
+  jcodeDir = join(process.env.JCODE_HOME ?? join(homedir(), ".jcode"), "sessions"),
+  claudeDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects")): EditEvent[] {
+  const files = recentFiles(jcodeDir, ".journal.jsonl").map(path => ({ path, source: "jcode" }));
+  try { for (const dir of readdirSync(claudeDir)) for (const path of recentFiles(join(claudeDir, dir), ".jsonl")) files.push({ path, source: "claude" }); } catch {}
+  const events: EditEvent[] = [];
+  for (const { path, source } of files.slice(0, 24)) {
+    let cwd = "";
+    let agent = basename(path).replace(/\.journal\.jsonl$|\.jsonl$/, "");
+    try {
+      if (source === "jcode") {
+        const meta = JSON.parse(readFileSync(path.replace(/\.journal\.jsonl$/, ".json"), "utf8"));
+        cwd = meta.working_dir ?? "";
+        agent = meta.short_name ?? agent;
+      }
+      for (const line of tail(path).split("\n")) {
+        let row: any;
+        try { row = JSON.parse(line); } catch { continue; }
+        cwd = row.meta?.working_dir ?? row.cwd ?? cwd;
+        if (source === "jcode") agent = row.meta?.short_name ?? agent;
+        else if (cwd) agent = `cc-${basename(cwd)}-${basename(path).slice(0, 4)}`;
+        const messages = source === "jcode" ? row.append_messages : [row.message];
+        if (!Array.isArray(messages)) continue;
+        for (const message of messages) for (const block of Array.isArray(message?.content) ? message.content : []) {
+          if (block?.type !== "tool_use") continue;
+          const input = block.input ?? {};
+          let paths: string[] = [];
+          if (["edit", "write", "read"].includes(block.name) && block.name !== "read" && typeof input.file_path === "string") paths = [input.file_path];
+          if (["apply_patch", "Edit", "Write", "MultiEdit"].includes(block.name)) {
+            if (typeof input.file_path === "string") paths.push(input.file_path);
+            if (typeof input.patch_text === "string") paths.push(...[...input.patch_text.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map(m => m[1]!));
+            if (typeof input.patch === "string") paths.push(...[...input.patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)].map(m => m[1]!));
+          }
+          for (const p of new Set(paths)) {
+            const absolute = resolve(cwd, p);
+            const repo = repos.find(r => absolute.startsWith(r.root + sep));
+            if (repo) events.push({ agent, root: repo.root, path: relative(repo.root, absolute), ts: Date.parse(row.timestamp ?? "") || statSync(path).mtimeMs });
+          }
+        }
+      }
+    } catch {} // Rotating or malformed journals are not fatal.
+  }
+  return events.slice(-500);
+}
+
 const RECENT_MS = 30 * 60_000;
 const TAIL_BYTES = 256 * 1024;
 

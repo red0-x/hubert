@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { recentCommands, fileDiff } from "./live";
+import { recentCommands, fileDiff, editEvents } from "./live";
 
 const git = (root: string, ...args: string[]) => Bun.spawnSync(["git", "-C", root, ...args], { stderr: "pipe" });
 
@@ -45,5 +45,22 @@ test("fileDiff returns tracked diff and untracked content but rejects unrelated 
     expect(() => fileDiff(root, ".git/config")).toThrow();
     expect(() => fileDiff(root, "missing.txt")).toThrow();
     expect(() => fileDiff(root, "new.txt\0evil")).toThrow();
+    const outside = mkdtempSync(join(tmpdir(), "hubert-outside-"));
+    try {
+      writeFileSync(join(outside, "secret"), "secret");
+      symlinkSync(join(outside, "secret"), join(root, "link"));
+      expect(() => fileDiff(root, "link")).toThrow();
+    } finally { rmSync(outside, { recursive: true, force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("edit events count observed tool calls and skip malformed lines", () => {
+  const base = mkdtempSync(join(tmpdir(), "hubert-edits-"));
+  try {
+    const root = join(base, "repo"), sessions = join(base, "sessions"), claude = join(base, "claude");
+    mkdirSync(root); mkdirSync(sessions); mkdirSync(claude);
+    writeFileSync(join(sessions, "one.json"), JSON.stringify({ working_dir: root }));
+    writeFileSync(join(sessions, "one.journal.jsonl"), ["broken", ...[1,2].map(() => JSON.stringify({ append_messages: [{ content: [{ type: "tool_use", name: "edit", input: { file_path: "a.ts" } }] }] }))].join("\n"));
+    expect(editEvents([{ root }], sessions, claude).map(e => e.path)).toEqual(["a.ts", "a.ts"]);
+  } finally { rmSync(base, { recursive: true, force: true }); }
 });
