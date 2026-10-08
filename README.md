@@ -26,8 +26,8 @@ bun install
 ## Explore
 
 - **Agents:** active sessions, their latest tool activity, and changed files. Select a jcode agent's tmux window or open a file diff.
-- **Change map:** a live visual connection between repositories and changed files. It does not yet attribute each edit to an individual agent.
-- **Commands:** recent completed Bash calls from jcode and Claude Code journals, with failures and duration where available.
+- **Change map:** a compact per-repository graph connecting agents and changed files, with edit counts from observed journal edit tools. Expand a repository for file attribution and recent commands. Counts cover only recent journal tails and do not include edits made through shell commands.
+- **Commands:** recent completed Bash calls from jcode and Claude Code journals in compact activity rows. Filter failures or expand a row for the raw command and error output; duration appears when available.
 - **Live diff:** changes against `HEAD`, including readable untracked files. Views refresh roughly every 1.5 seconds.
 
 Hubert reads jcode sessions from `~/.jcode`, Claude Code journals from `~/.claude`, and git state for repositories with live agents. A session is marked **working** after recent transcript activity and **idle** when quiet.
