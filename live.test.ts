@@ -16,6 +16,8 @@ test("recentCommands joins only completed bash calls across recent sessions", ()
       { append_messages: [{ role: "user", tool_duration_ms: 23, content: [{ type: "tool_result", tool_use_id: "one", content: "ok" }] }] },
       { append_messages: [{ role: "assistant", content: [{ type: "tool_use", id: "failed", name: "bash", input: { command: "exit 7" } }] }] },
       { append_messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "failed", content: "\n\nExit code: 7" }] }] },
+      { append_messages: [{ role: "assistant", content: [{ type: "tool_use", id: "old", name: "bash", input: { command: "exit 8" } }, { type: "tool_use", id: "literal", name: "bash", input: { command: "echo Exit code: 7" } }] }] },
+      { append_messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "old", content: "Command finished with exit code: 8" }, { type: "tool_result", tool_use_id: "literal", content: "Exit code: 7\n" }] }] },
     ];
     writeFileSync(join(j, "session.journal.jsonl"), lines.map(x => JSON.stringify(x)).join("\n") + "\n");
     writeFileSync(join(j, "session.json"), JSON.stringify({ short_name: "turtle" }));
@@ -24,10 +26,12 @@ test("recentCommands joins only completed bash calls across recent sessions", ()
       { type: "user", timestamp: "2026-10-08T05:00:01Z", message: { content: [{ type: "tool_result", tool_use_id: "two", is_error: true, content: "failed" }] } },
     ].map(x => JSON.stringify(x)).join("\n") + "\n");
     const commands = recentCommands(j, c);
-    expect(commands.map(x => x.command).sort()).toEqual(["echo one", "exit 7", "false"]);
+    expect(commands.map(x => x.command).sort()).toEqual(["echo Exit code: 7", "echo one", "exit 7", "exit 8", "false"]);
     expect(commands.find(x => x.command === "echo one")).toMatchObject({ agent: "turtle", source: "jcode", ok: true, duration_ms: 23, intent: "say one" });
     expect(commands.find(x => x.command === "false")).toMatchObject({ source: "claude", ok: false, error: "failed", duration_ms: 1000 });
     expect(commands.find(x => x.command === "exit 7")).toMatchObject({ source: "jcode", ok: false, error: "\n\nExit code: 7" });
+    expect(commands.find(x => x.command === "exit 8")?.ok).toBe(false);
+    expect(commands.find(x => x.command === "echo Exit code: 7")?.ok).toBe(true);
   } finally { rmSync(base, { recursive: true, force: true }); }
 });
 

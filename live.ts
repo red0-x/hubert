@@ -121,7 +121,7 @@ export function recentCommands(
               const command = pending.get(block.tool_use_id)!;
               pending.delete(block.tool_use_id);
               const output = typeof block.content === "string" ? block.content : Array.isArray(block.content) ? block.content.map((part: any) => part.text ?? "").join("\n") : "";
-              command.ok = block.is_error !== true && !/\n\n(?:Command finished with )?Exit code: [1-9]\d*\s*$/i.test(output);
+              command.ok = block.is_error !== true && !/(?:\n\nExit code:|\bCommand finished with exit code:)\s*[1-9]\d*\s*$/i.test(output);
               if (!command.ok) command.error = output.slice(0, 1000);
               const duration = message.tool_duration_ms ?? (source === "claude" ? timestamp - command.ts : undefined);
               if (typeof duration === "number" && duration >= 0) command.duration_ms = duration;
