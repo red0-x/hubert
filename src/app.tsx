@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BotIcon, GitBranchIcon, GitCompareIcon, MicIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { Agent, Repo } from "../state";
-import { describe, parseIntent } from "../voice/intent";
 import { useVoice } from "./use-voice";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +18,35 @@ import { Toaster } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type State = { now: number; agents: Agent[]; repos: Repo[] };
+
+type PlanAction = { type: string; agent?: string; repo?: string; text?: string; prompt?: string; needsConfirm: boolean };
+const label = (a: PlanAction) =>
+  a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "open" ? `Open new agent${a.repo ? ` in ${a.repo}` : ""}${a.prompt ? ` (${a.prompt})` : ""}` : a.type === "focus" ? `Focus ${a.agent}` : `Status of ${a.agent}`;
+
+async function runAction(a: PlanAction, confirmed: boolean) {
+  const { needsConfirm, ...action } = a;
+  const r = await fetch("/api/execute", { method: "POST", body: JSON.stringify({ action, confirmed }) }).catch(() => null);
+  if (!r) return toast.error("hubert server is not reachable");
+  const body = await r.text();
+  if (!r.ok) return toast.error(body);
+  toast.success((JSON.parse(body) as { result: string }).result);
+}
+
+/** Transcript -> plan (grammar first, light model otherwise). Focus/status run now; send/open wait for a click. */
+async function handleSpeech(text: string, connector: string) {
+  const id = toast.loading(`“${text}”`, { description: "Thinking…" });
+  const r = await fetch("/api/voice", { method: "POST", body: JSON.stringify({ text }) }).catch(() => null);
+  if (!r?.ok) return toast.error(r ? await r.text() : "hubert server is not reachable", { id });
+  const plan = (await r.json()) as { say: string; actions: PlanAction[]; dropped: string[]; via: string };
+  toast.dismiss(id);
+  const desc = `${plan.via === "grammar" ? "" : `${plan.via} \u00b7 `}${connector}`;
+  if (!plan.actions.length) return toast(plan.say || "No matching command", { description: `“${text}” \u00b7 ${desc}` });
+  for (const a of plan.actions) {
+    if (!a.needsConfirm) await runAction(a, false);
+    else toast(label(a), { description: `${plan.say} \u00b7 ${desc}`, duration: 15000, action: { label: "Do it", onClick: () => void runAction(a, true) }, cancel: { label: "Cancel", onClick: () => {} } });
+  }
+  for (const d of plan.dropped) toast.warning(`Ignored: ${d}`);
+}
 
 const ago = (now: number, t: number) => {
   const s = Math.max(0, Math.round((now - t) / 1000));
@@ -124,14 +152,8 @@ function App() {
   const [s, setS] = useState<State | null>(null);
   const [stale, setStale] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
-  const known = useRef({ agents: [] as string[], repos: [] as string[] });
-
   const voice = useVoice(
-    useCallback((text: string, connector: string) => {
-      const intent = parseIntent(text, known.current);
-      // Actions (focus/open/send) are not wired yet, so show what hubert understood.
-      toast(`“${text}”`, { description: `${describe(intent)} \u00b7 ${connector}` });
-    }, []),
+    handleSpeech,
     useCallback((msg: string) => toast.error(msg), []),
   );
 
@@ -162,7 +184,6 @@ function App() {
   const roots = visible.filter((a) => !a.parent || !ids.has(a.parent));
   const kids = (id: string) => visible.filter((a) => a.parent === id);
   const working = s.agents.filter((a) => a.state === "working").length;
-  known.current = { agents: s.agents.filter((a) => a.state === "working" || a.state === "idle").map((a) => a.name), repos: s.repos.map((r) => r.name) };
   const micOff = !voice.stt?.active;
   const micTip = voice.stt?.active ? `Hold to talk (${voice.stt.active})` : "No speech-to-text connector configured, see README";
 

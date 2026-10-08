@@ -50,7 +50,29 @@ Hold the mic button in the dashboard and speak. hubert transcribes it with the s
 
 Agent and repo names are fuzzy-matched against what is running (speech-to-text mangles names), and hubert refuses to guess when two names are equally close. Repeated phrases, "please", and "the" are tolerated.
 
-> **Status:** transcription and intent parsing work end to end. Executing the actions (focus, open, send) is the next milestone, see the [roadmap](#roadmap). Today the result is shown as a toast.
+> **Status:** focus, status and send work. Opening an agent starts a new `jcode` in the repo but does not deliver the prompt yet, and `stop`/`diff` are parsed but have no action yet.
+
+### Orchestration brain
+
+Simple commands ("switch to snake") are handled by the grammar instantly. Anything else ("go to the snail one", "tell snake to also write tests and have llama look over the nav") goes to a **light model run through jcode**, so it uses your existing jcode login and any provider jcode supports. The model has no tools (`--tool-profile none`): it can only return a JSON plan. hubert then validates every action against what is actually running, so invented agents or repos are dropped.
+
+| Action | Runs |
+| --- | --- |
+| focus, status | immediately |
+| send, open | after you click **Do it** in the toast |
+
+- **Focus** finds the agent's terminal through its tmux pane title (`jcode <Name>`) and focuses that window on Hyprland. Without Hyprland it only selects the tmux window.
+- **Send** uses `jcode transcript --session <id>`. The agent receives it as a `[transcription]` message.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HUBERT_BRAIN` | on if `jcode` is installed | `off` disables the model, grammar still works |
+| `HUBERT_BRAIN_MODEL` | newest Haiku, else a "luna" or mini model from `jcode model list` | Any model jcode offers, e.g. `claude-haiku-5-5` |
+| `HUBERT_BRAIN_PROVIDER` | jcode's choice | Force a jcode provider |
+
+> **Privacy:** for requests the grammar cannot handle, your transcript, the names of running agents and their last tool line are sent to the brain model through jcode. Set `HUBERT_BRAIN=off` to keep everything local.
+
+Each brain call leaves a short closed jcode session titled `HUBERT-BRAIN…`. hubert hides these from the dashboard.
 
 ### Speech-to-text connectors
 
@@ -106,11 +128,13 @@ Bun (server + bundler via HTML imports), React, [shadcn/ui](https://ui.shadcn.co
 
 - [x] Live agents + changed files (jcode, Claude Code)
 - [x] Voice: pluggable speech-to-text (local + cloud) and intent parsing
-- [ ] Voice actions: focus, open, move and message agents
+- [x] Voice actions: focus, status, send (confirmed), open
+- [x] Orchestrator brain: light model via jcode turns free-form speech into a validated plan
+- [ ] Open with a starting prompt, stop/interrupt, move agents between workspaces
 - [ ] Live diff window
 - [ ] Command stats: most failed, most sent, longest
 - [ ] Change graph and change frequency (Obsidian-style)
-- [ ] Orchestrator brain: free-form voice to a plan of actions
+- [ ] Multi-step plans with agent-to-agent relays
 - [ ] More agents: Codex CLI, opencode
 
 ## License

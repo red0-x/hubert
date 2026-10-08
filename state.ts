@@ -8,6 +8,8 @@ const CLAUDE_PROJECTS = join(process.env.CLAUDE_CONFIG_DIR ?? join(HOME, ".claud
 const WORKING_MS = 15_000; // journal touched this recently = working
 const RECENT_MS = 30 * 60_000; // show non-active sessions touched this recently
 const TAIL_BYTES = 64 * 1024;
+/** Prompts that start with this are hubert's own brain calls, so they are not shown as agents. */
+export const BRAIN_MARK = "HUBERT-BRAIN";
 
 export type Agent = {
   id: string;
@@ -99,6 +101,7 @@ function jcodeAgents(now: number): Agent[] {
     const lines = jsonLines(tail(journal));
     const meta = { ...base, ...(lines.findLast((l) => l.meta)?.meta ?? {}) };
     const status = meta.status;
+    if (typeof meta.title === "string" && meta.title.startsWith(BRAIN_MARK)) continue;
     const crashed = typeof status === "object" && status && "Crashed" in status;
     if (status !== "Active" && !crashed && now - mtime > RECENT_MS) continue;
     const live = status === "Active" && alive(meta.last_pid);

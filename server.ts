@@ -1,6 +1,9 @@
 import index from "./src/index.html";
 import { collect } from "./state";
 import { sttStatus, transcribe } from "./voice/stt";
+import { brainStatus, intentToAction, plan, type Action } from "./voice/brain";
+import { NEEDS_CONFIRM, execute } from "./voice/actions";
+import { describe, parseIntent } from "./voice/intent";
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
@@ -53,6 +56,50 @@ const server = Bun.serve({
           return Response.json(await transcribe(audio, mime));
         } catch (e) {
           return new Response((e as Error).message, { status: 502 });
+        }
+      },
+    },
+    "/api/voice": {
+      GET: async (req) => guard(req) ?? Response.json(await brainStatus()),
+      // Transcript in, plan out. Grammar first (instant, free), light model for anything else. Nothing is executed here.
+      POST: async (req) => {
+        const denied = guard(req);
+        if (denied) return denied;
+        const { text } = (await req.json().catch(() => ({}))) as { text?: string };
+        if (!text?.trim() || text.length > 2000) return new Response("text required (max 2000 chars)", { status: 400 });
+        const s = collect();
+        const live = s.agents.filter((a) => a.state === "working" || a.state === "idle");
+        const known = { agents: live.map((a) => a.name), repos: s.repos.map((r) => r.name) };
+        const intent = parseIntent(text, known);
+        const act = intentToAction(intent);
+        const withFlags = (actions: Action[]) => actions.map((a) => ({ ...a, needsConfirm: NEEDS_CONFIRM.has(a.type) }));
+        if (act) return Response.json({ say: describe(intent), actions: withFlags([act]), dropped: [], via: "grammar" });
+        try {
+          const p = await plan(text, live, known.repos);
+          return Response.json({ say: p.say, actions: withFlags(p.actions), dropped: p.dropped, via: p.model });
+        } catch (e) {
+          return new Response((e as Error).message, { status: 502 });
+        }
+      },
+    },
+    "/api/execute": {
+      POST: async (req) => {
+        const denied = guard(req);
+        if (denied) return denied;
+        const { action, confirmed } = (await req.json().catch(() => ({}))) as { action?: Action; confirmed?: boolean };
+        if (!action || typeof action !== "object") return new Response("action required", { status: 400 });
+        // Re-validate against live state: never trust the client's names.
+        const s = collect();
+        const live = s.agents.filter((a) => a.state === "working" || a.state === "idle").map((a) => a.name);
+        if ("agent" in action && !live.includes(action.agent)) return new Response(`unknown agent ${String(action.agent)}`, { status: 400 });
+        if (action.type === "send" && (typeof action.text !== "string" || !action.text.trim() || action.text.length > 2000)) return new Response("bad text", { status: 400 });
+        if (!["focus", "send", "status", "open"].includes(action.type)) return new Response("unsupported action", { status: 400 });
+        if (action.type === "open" && action.repo !== undefined && !s.repos.some((r) => r.name === action.repo)) return new Response(`unknown repo ${String(action.repo)}`, { status: 400 });
+        if (NEEDS_CONFIRM.has(action.type) && confirmed !== true) return new Response("this action needs confirmed: true", { status: 409 });
+        try {
+          return Response.json({ result: execute(action) });
+        } catch (e) {
+          return new Response((e as Error).message, { status: 422 });
         }
       },
     },
