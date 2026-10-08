@@ -1,7 +1,34 @@
-import index from "./index.html";
+import index from "./src/index.html";
 import { collect } from "./state";
 
 const PORT = Number(process.env.HUBERT_PORT ?? 7777);
+const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+
+// argv used to run a command in a new terminal window, first one found on PATH wins.
+const TERMINALS: Record<string, string[]> = {
+  kitty: ["kitty"],
+  ghostty: ["ghostty", "-e"],
+  foot: ["foot"],
+  alacritty: ["alacritty", "-e"],
+  wezterm: ["wezterm", "start", "--"],
+  "gnome-terminal": ["gnome-terminal", "--"],
+  konsole: ["konsole", "-e"],
+  xterm: ["xterm", "-e"],
+};
+
+function terminal(): string[] | null {
+  if (process.env.HUBERT_TERMINAL) return process.env.HUBERT_TERMINAL.split(/\s+/);
+  for (const [bin, argv] of Object.entries(TERMINALS)) if (Bun.which(bin)) return argv;
+  return null;
+}
+
+// Local-only API: block DNS-rebinding (Host) and cross-site requests (Origin).
+function guard(req: Request): Response | null {
+  if (!ALLOWED_HOSTS.has(req.headers.get("host") ?? "")) return new Response("bad host", { status: 403 });
+  const origin = req.headers.get("origin");
+  if (origin && !ALLOWED_HOSTS.has(new URL(origin).host)) return new Response("bad origin", { status: 403 });
+  return null;
+}
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
@@ -9,13 +36,18 @@ const server = Bun.serve({
   development: process.env.NODE_ENV !== "production",
   routes: {
     "/": index,
-    "/api/state": () => Response.json(collect()),
+    "/api/state": (req) => guard(req) ?? Response.json(collect()),
     "/api/lazygit": {
       POST: async (req) => {
-        const { root } = (await req.json()) as { root?: string };
+        const denied = guard(req);
+        if (denied) return denied;
+        const { root } = (await req.json().catch(() => ({}))) as { root?: string };
         // only open repos we are currently reporting, never arbitrary paths
         if (!root || !collect().repos.some((r) => r.root === root)) return new Response("unknown repo", { status: 400 });
-        Bun.spawn(["kitty", "--class", "hubert-lazygit", "--directory", root, "lazygit"], { stdio: ["ignore", "ignore", "ignore"] }).unref();
+        if (!Bun.which("lazygit")) return new Response("lazygit not installed", { status: 501 });
+        const term = terminal();
+        if (!term) return new Response("no terminal found, set HUBERT_TERMINAL", { status: 501 });
+        Bun.spawn([...term, "lazygit"], { cwd: root, stdio: ["ignore", "ignore", "ignore"] }).unref();
         return new Response("ok");
       },
     },

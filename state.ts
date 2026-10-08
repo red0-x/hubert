@@ -3,8 +3,8 @@ import { homedir } from "os";
 import { join, basename } from "path";
 
 const HOME = homedir();
-const JCODE_SESSIONS = join(HOME, ".jcode/sessions");
-const CLAUDE_PROJECTS = join(HOME, ".claude/projects");
+const JCODE_SESSIONS = join(process.env.JCODE_HOME ?? join(HOME, ".jcode"), "sessions");
+const CLAUDE_PROJECTS = join(process.env.CLAUDE_CONFIG_DIR ?? join(HOME, ".claude"), "projects");
 const WORKING_MS = 15_000; // journal touched this recently = working
 const RECENT_MS = 30 * 60_000; // show non-active sessions touched this recently
 const TAIL_BYTES = 64 * 1024;
