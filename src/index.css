@@ -123,3 +123,13 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media (prefers-reduced-motion: no-preference) {
+  .hubert-mascot {
+    animation: hubert-bob 4s ease-in-out infinite;
+  }
+}
+
+@keyframes hubert-bob {
+  50% { transform: translateY(-3px); }
+}
