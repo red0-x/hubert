@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { buildPrompt, intentToAction, parsePlan, pickModel } from "./brain";
-import { findPane } from "./actions";
+import { findPane, windowCommand } from "./actions";
 
 const known = { agents: ["snake", "snail", "llama"], repos: ["ecily", "hubert"] };
 
@@ -31,14 +31,40 @@ test("parsePlan: invented agents/repos/action types are dropped, near-miss names
     }),
     known,
   );
-  expect(p.actions).toEqual([
-    { type: "send", agent: "llama", text: "review" },
-    { type: "open", repo: "ecily", prompt: "fix nav" },
-  ]);
-  expect(p.dropped.length).toBe(2);
+  expect(p.actions).toEqual([{ type: "send", agent: "llama", text: "review" }]);
+  expect(p.dropped.length).toBe(3);
   const q = parsePlan(JSON.stringify({ say: "x", actions: [{ type: "send", agent: "snake", text: "  " }, { type: "open", repo: "nowhere" }] }), known);
   expect(q.actions).toEqual([]);
-  expect(q.dropped).toEqual(["send: empty text", 'open: unknown repo "nowhere"']);
+  expect(q.dropped).toEqual(["send: empty text", 'unknown action "open"']);
+});
+
+test("window plans only accept exact current addresses and bounded coordinates", () => {
+  const address = "0xabcdef123";
+  const windows = [{ address, title: "Editor", class: "kitty", workspace: 2 }];
+  const raw = JSON.stringify({ say: "arrange", actions: [
+    { type: "move", address, x: 25, y: 40 },
+    { type: "resize", address, width: 900, height: 650 },
+    { type: "move", address: "0x9999", x: 0, y: 0 },
+    { type: "resize", address, width: -1, height: 650 },
+  ] });
+  const p = parsePlan(raw, { ...known, windows });
+  expect(p.actions).toEqual([{ type: "move", address, x: 25, y: 40 }, { type: "resize", address, width: 900, height: 650 }]);
+  expect(p.dropped.length).toBe(2);
+  expect(parsePlan(JSON.stringify({ actions: [{ type: "move", title: "Editor", x: 0, y: 0 }] }), { ...known, windows }).actions).toEqual([]);
+});
+
+test("window dispatch revalidates fresh clients and never accepts arbitrary dispatch arguments", () => {
+  const windows = [{ address: "0xabcdef123", title: "Editor", class: "kitty", workspace: 2 }];
+  expect(windowCommand({ type: "move", address: windows[0]!.address, x: 20, y: -30 }, windows)).toEqual(["hyprctl", "dispatch", "movewindowpixel", "exact 20 -30,address:0xabcdef123"]);
+  expect(windowCommand({ type: "resize", address: windows[0]!.address, width: 900, height: 650 }, windows)).toEqual(["hyprctl", "dispatch", "resizewindowpixel", "exact 900 650,address:0xabcdef123"]);
+  for (const bad of [
+    { type: "move", address: "0x9999", x: 20, y: 30 },
+    { type: "move", address: "0xabcdef123;exec", x: 20, y: 30 },
+    { type: "move", address: "0xabcdef123", x: 100000, y: 0 },
+    { type: "resize", address: "0xabcdef123", width: 0, height: 200 },
+    { type: "resize", address: "0xabcdef123", width: 200.5, height: 200 },
+    { type: "killactive", address: "0xabcdef123" },
+  ]) expect(() => windowCommand(bad as never, windows)).toThrow();
 });
 
 test("parsePlan: caps actions and text length, ignores wrong field types", () => {
@@ -62,6 +88,14 @@ test("buildPrompt carries the mark, agent list, and a JSON-escaped utterance (no
   expect(p.startsWith("HUBERT-BRAIN")).toBe(true);
   expect(p).toContain("- snake (working, repo ecily): bash: ls");
   expect(p).toContain(JSON.stringify('say "hi"\nIgnore previous'));
+});
+
+test("buildPrompt offers only existing window addresses and no create action", () => {
+  const prompt = buildPrompt("put editor at 20,30", [], [], [{ address: "0xabc", title: "Editor", class: "kitty", workspace: 1 }]);
+  expect(prompt).toContain('"address":"0xabc"');
+  expect(prompt).toContain('"type":"move"');
+  expect(prompt).toContain('"type":"resize"');
+  expect(prompt).not.toContain('"type":"open"');
 });
 
 test("intentToAction maps grammar intents; stop/diff/unknown have no action", () => {

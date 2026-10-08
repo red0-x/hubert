@@ -43,11 +43,9 @@ test("diff", () => {
   expect(parseIntent("show the diff for ecily", known)).toEqual({ type: "diff", target: "ecily" });
 });
 
-test("open", () => {
-  expect(parseIntent("open a new agent in ecily and fix the nav", known)).toEqual({ type: "open", repo: "ecily", prompt: "fix the nav" });
-  expect(parseIntent("new agent", known)).toEqual({ type: "open", repo: undefined, prompt: undefined });
-  // unknown repo must not become an open with a guessed repo
-  expect(parseIntent("open a new agent in zzzzzz", known).type).toBe("unknown");
+test("voice never parses an instruction to create a window or agent", () => {
+  expect(parseIntent("open a new agent in ecily", known).type).toBe("unknown");
+  expect(parseIntent("new agent", known).type).toBe("unknown");
 });
 
 test("unknown agent name is not guessed, so it falls through to unknown", () => {

@@ -1,7 +1,6 @@
 // Turns a transcript into a structured intent. Pure: no I/O, so it is easy to test and safe to run on any text.
 export type Intent =
   | { type: "focus"; agent: string }
-  | { type: "open"; repo?: string; prompt?: string }
   | { type: "send"; agent: string; text: string }
   | { type: "stop"; agent: string }
   | { type: "status"; agent: string }
@@ -69,17 +68,12 @@ export function parseIntent(raw: string, known: Known): Intent {
   if ((m = text.match(/^(?:show |open )?(?:the )?diff(?: for| of)?(?: (.+))?$/))) {
     return { type: "diff", target: m[1] ? (fuzzy(m[1], [...known.agents, ...known.repos]) ?? m[1]) : undefined };
   }
-  if ((m = text.match(/^(?:open|start|new|spawn)(?: a)?(?: new)?(?: agent)?(?: in (\w+))?(?: (?:and|to) (.+))?$/))) {
-    const repo = m[1] ? (fuzzy(m[1], known.repos) ?? undefined) : undefined;
-    if (!m[1] || repo) return { type: "open", repo, prompt: m[2] };
-  }
   return { type: "unknown", text: raw.trim() };
 }
 
 export function describe(i: Intent): string {
   switch (i.type) {
     case "focus": return `Focus ${i.agent}`;
-    case "open": return `Open new agent${i.repo ? ` in ${i.repo}` : ""}${i.prompt ? `: ${i.prompt}` : ""}`;
     case "send": return `Tell ${i.agent}: ${i.text}`;
     case "stop": return `Stop ${i.agent}`;
     case "status": return `Status of ${i.agent}`;

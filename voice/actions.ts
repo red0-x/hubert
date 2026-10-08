@@ -1,10 +1,11 @@
-// Executes validated actions. Everything here has a real side effect, so callers must confirm anything but focus/status.
+// Executes validated actions. Window mutations require explicit confirmation in the HTTP handler.
 import { tmpdir } from "os";
 import { basename } from "path";
 import type { Action } from "./brain";
 import { collect } from "../state";
 
 export type Pane = { session: string; window: string; title: string };
+export type Window = { address: string; title: string; class: string; workspace: number };
 
 /** tmux pane title "🌐 jcode Snail · +42 -0" -> match by whole word "jcode <Name>". Pure so it can be tested. */
 export function findPane(panes: Pane[], shortName: string): Pane | null {
@@ -56,18 +57,30 @@ export function sendToAgent(name: string, text: string): string {
   return `Sent to ${name}`;
 }
 
-const TERMINALS: Record<string, string[]> = { kitty: ["kitty", "--directory"], foot: ["foot", "-D"], alacritty: ["alacritty", "--working-directory"], wezterm: ["wezterm", "start", "--cwd"], ghostty: ["ghostty", "--working-directory="] };
+/** Enumerate current mapped clients; do not trust client/model-supplied addresses. */
+export function listWindows(): Window[] {
+  if (!Bun.which("hyprctl") || !process.env.HYPRLAND_INSTANCE_SIGNATURE) return [];
+  const result = run(["hyprctl", "clients", "-j"]);
+  if (!result.ok) throw new Error(`could not list Hyprland windows: ${result.err.slice(0, 200)}`);
+  const clients: unknown = JSON.parse(result.out);
+  if (!Array.isArray(clients)) throw new Error("invalid Hyprland client list");
+  return clients.filter((c) => c && c.mapped !== false && typeof c.address === "string" && /^0x[0-9a-f]+$/i.test(c.address))
+    .map((c) => ({ address: c.address, title: String(c.title ?? ""), class: String(c.class ?? ""), workspace: Number(c.workspace?.id ?? 0) }));
+}
 
-/** Open a new jcode in a terminal in the repo. The prompt is not delivered yet (jcode has no start-with-prompt flag). */
-export function openAgent(repoName?: string): string {
-  const repo = repoName ? collect().repos.find((r) => r.name === repoName)?.root : undefined;
-  if (repoName && !repo) throw new Error(`unknown repo ${repoName}`);
-  const dir = repo ?? process.env.HOME ?? tmpdir();
-  const term = process.env.HUBERT_TERMINAL?.split(/\s+/) ?? Object.entries(TERMINALS).find(([b]) => Bun.which(b))?.[1];
-  if (!term) throw new Error("no terminal found, set HUBERT_TERMINAL");
-  const argv = process.env.HUBERT_TERMINAL ? [...term, "jcode"] : term[0] === "ghostty" ? [term[0], `${term[1]}${dir}`, "-e", "jcode"] : [...term, dir, "jcode"];
-  Bun.spawn(argv, { cwd: dir, stdio: ["ignore", "ignore", "ignore"] }).unref();
-  return `Opened a new jcode in ${basename(dir)}`;
+/** Pure command builder: no model-provided dispatcher names or unchecked arguments. */
+export function windowCommand(action: unknown, windows: Window[]): string[] {
+  const a = action as Record<string, unknown> | null;
+  if (!a || (a.type !== "move" && a.type !== "resize")) throw new Error("unsupported window action");
+  if (typeof a.address !== "string" || !/^0x[0-9a-f]+$/i.test(a.address) || !windows.some((w) => w.address === a.address))
+    throw new Error("window is no longer available");
+  const valid = (n: unknown, min: number, max: number) => typeof n === "number" && Number.isInteger(n) && n >= min && n <= max;
+  if (a.type === "move") {
+    if (!valid(a.x, -10000, 10000) || !valid(a.y, -10000, 10000)) throw new Error("invalid window coordinates");
+    return ["hyprctl", "dispatch", "movewindowpixel", `exact ${a.x} ${a.y},address:${a.address}`];
+  }
+  if (!valid(a.width, 100, 10000) || !valid(a.height, 100, 10000)) throw new Error("invalid window dimensions");
+  return ["hyprctl", "dispatch", "resizewindowpixel", `exact ${a.width} ${a.height},address:${a.address}`];
 }
 
 export function statusOf(name: string): string {
@@ -76,13 +89,19 @@ export function statusOf(name: string): string {
   return `${a.name} is ${a.state}${a.repo ? ` in ${basename(a.repo)}` : ""}${a.doing ? `. Last: ${a.doing}` : ""}`;
 }
 
-export const NEEDS_CONFIRM = new Set<Action["type"]>(["send", "open"]);
+export const NEEDS_CONFIRM = new Set<Action["type"]>(["send", "move", "resize"]);
 
 export function execute(a: Action): string {
   switch (a.type) {
     case "focus": return focusAgent(a.agent);
     case "send": return sendToAgent(a.agent, a.text);
-    case "open": return openAgent(a.repo);
+    case "move":
+    case "resize": {
+      const argv = windowCommand(a, listWindows());
+      const result = run(argv);
+      if (!result.ok || result.out !== "ok") throw new Error(`Hyprland refused ${a.type}: ${(result.err || result.out).slice(0, 200)}`);
+      return `${a.type === "move" ? "Moved" : "Resized"} window ${a.address}`;
+    }
     case "status": return statusOf(a.agent);
   }
 }
