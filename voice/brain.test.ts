@@ -101,7 +101,7 @@ test("buildPrompt offers only existing window addresses and no create action", (
 test("intentToAction maps grammar intents; stop/diff/unknown have no action", () => {
   expect(intentToAction({ type: "focus", agent: "snake" })).toEqual({ type: "focus", agent: "snake" });
   expect(intentToAction({ type: "send", agent: "llama", text: "hi" })).toEqual({ type: "send", agent: "llama", text: "hi" });
-  expect(intentToAction({ type: "stop", agent: "snake" })).toBeNull();
+  expect(intentToAction({ type: "stop", agent: "snake" })).toEqual({ type: "stop", agent: "snake" });
   expect(intentToAction({ type: "unknown", text: "x" })).toBeNull();
 });
 

@@ -1,4 +1,5 @@
-import { readdirSync, statSync, openSync, readSync, closeSync, readFileSync } from "fs";
+import { readdirSync, statSync, openSync, readSync, closeSync, readFileSync, existsSync } from "fs";
+import { Database } from "bun:sqlite";
 import { homedir } from "os";
 import { join, basename } from "path";
 
@@ -14,7 +15,7 @@ export const BRAIN_MARK = "HUBERT-BRAIN";
 export type Agent = {
   id: string;
   name: string;
-  source: "jcode" | "claude";
+  source: "jcode" | "claude" | "codex" | "omp" | "pi" | "opencode" | "cursor";
   cwd: string;
   repo: string | null;
   model?: string;
@@ -156,6 +157,145 @@ function claudeAgents(now: number): Agent[] {
   return agents;
 }
 
+// ---- Other agents. Discovery only: state, repo, model, last tool. Codex and Claude formats were checked against real files; omp, pi, opencode and cursor follow their documented layouts and are untested on a real install. ----
+
+function head(path: string, bytes = 64 * 1024): string {
+  const fd = openSync(path, "r");
+  try { const buf = Buffer.alloc(Math.min(statSync(path).size, bytes)); readSync(fd, buf, 0, buf.length, 0); return buf.toString("utf8"); } finally { closeSync(fd); }
+}
+
+/** Recently modified files under `dir` matching `want`, at most `depth` directory levels down. */
+function recentFiles(dir: string, depth: number, want: (name: string) => boolean, now: number): { path: string; mtime: number }[] {
+  const out: { path: string; mtime: number }[] = [];
+  const walk = (d: string, left: number) => {
+    let names: string[];
+    try { names = readdirSync(d); } catch { return; }
+    for (const n of names) {
+      const p = join(d, n);
+      let st; try { st = statSync(p); } catch { continue; }
+      if (st.isDirectory()) { if (left > 0) walk(p, left - 1); }
+      else if (want(n) && now - st.mtimeMs < RECENT_MS) out.push({ path: p, mtime: st.mtimeMs });
+    }
+  };
+  walk(dir, depth);
+  return out;
+}
+
+const state = (now: number, mtime: number): Agent["state"] => (now - mtime < WORKING_MS ? "working" : "idle");
+const short = (s: unknown) => String(s ?? "").replace(/\s+/g, " ").slice(0, 120);
+
+/** Last tool call in Codex rollout lines: function_call (JSON args) or custom_tool_call (JS source containing "cmd"). */
+export function codexDoing(lines: any[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const p = lines[i]?.type === "response_item" ? lines[i].payload : null;
+    if (p?.type !== "function_call" && p?.type !== "custom_tool_call") continue;
+    let what = "";
+    try { const a = JSON.parse(p.arguments); what = a.cmd ?? a.command ?? ""; } catch {}
+    what ||= /"cmd":"((?:[^"\\]|\\.){1,160})/.exec(String(p.input ?? p.arguments ?? ""))?.[1] ?? "";
+    return `${p.name}${what ? ": " + short(what) : ""}`;
+  }
+}
+
+function codexAgents(now: number): Agent[] {
+  const root = join(process.env.CODEX_HOME ?? join(HOME, ".codex"), "sessions");
+  const files: { path: string; mtime: number }[] = [];
+  for (let back = 0; back < 3; back++) {
+    const d = new Date(now - back * 86_400_000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    files.push(...recentFiles(join(root, String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate())), 0, n => n.endsWith(".jsonl"), now));
+  }
+  const agents: Agent[] = [];
+  for (const { path, mtime } of files) {
+    try {
+      const lines = jsonLines(tail(path));
+      const meta = jsonLines(head(path).split("\n")[0] ?? "")[0]?.payload;
+      const cwd: string = lines.findLast((l) => l.type === "turn_context")?.payload?.cwd ?? meta?.cwd ?? "";
+      const id: string = meta?.id ?? /([0-9a-f-]{36})\.jsonl$/.exec(path)?.[1] ?? basename(path);
+      if (!cwd) continue;
+      agents.push({ id, name: `cx-${basename(cwd)}-${id.slice(0, 4)}`, source: "codex", cwd, repo: null, model: (lines.findLast((l) => l.type === "turn_context") ?? jsonLines(head(path)).find((l) => l.type === "turn_context"))?.payload?.model,
+        state: state(now, mtime), doing: codexDoing(lines), lastActive: mtime });
+    } catch {}
+  }
+  return agents;
+}
+
+/** omp and pi share one JSONL format: header {type:"session",id,cwd} (omp precedes it with a title slot), then message entries. */
+export function piDoing(lines: any[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    for (const b of [...(lines[i]?.message?.content ?? [])].reverse()) {
+      if (b?.type === "toolCall" || b?.type === "tool_use") {
+        const a = b.arguments ?? b.input ?? {};
+        const what = a.command ?? a.cmd ?? a.path ?? a.file_path ?? a.pattern ?? "";
+        return `${b.name}${what ? ": " + short(what) : ""}`;
+      }
+    }
+  }
+}
+
+function piAgents(now: number, source: "omp" | "pi", root: string): Agent[] {
+  const agents: Agent[] = [];
+  for (const { path, mtime } of recentFiles(root, 2, n => n.endsWith(".jsonl"), now)) {
+    try {
+      const header = jsonLines(head(path, 8192)).find((l) => l.type === "session");
+      if (!header?.cwd || header.parentSession) continue; // subagent runs would flood the list
+      const lines = jsonLines(tail(path));
+      const id: string = header.id ?? basename(path, ".jsonl");
+      agents.push({ id, name: `${source}-${basename(header.cwd)}-${id.slice(0, 4)}`, source, cwd: header.cwd, repo: null,
+        model: lines.findLast((l) => l.message?.model)?.message.model, state: state(now, mtime), doing: piDoing(lines), lastActive: mtime });
+    } catch {}
+  }
+  return agents;
+}
+
+/** OpenCode 1.17+ keeps sessions in SQLite. Older JSON stores are not read. */
+function opencodeAgents(now: number): Agent[] {
+  const db = join(process.env.XDG_DATA_HOME ?? join(HOME, ".local/share"), "opencode", "opencode.db");
+  if (!existsSync(db)) return [];
+  let conn: Database | undefined;
+  try {
+    conn = new Database(db, { readonly: true });
+    const rows = conn.query("SELECT id, title, directory, parent_id, model, time_updated FROM session WHERE time_archived IS NULL AND time_updated > ? AND parent_id IS NULL ORDER BY time_updated DESC LIMIT 20").all(now - RECENT_MS) as any[];
+    return rows.map((r) => {
+      let model: string | undefined; try { model = JSON.parse(r.model)?.id; } catch {}
+      return { id: r.id, name: `oc-${basename(r.directory)}-${String(r.id).slice(-4)}`, source: "opencode" as const, cwd: r.directory, repo: null, model, title: r.title,
+        state: state(now, r.time_updated), doing: r.title ? short(r.title) : undefined, lastActive: r.time_updated };
+    });
+  } catch { return []; } finally { conn?.close(); }
+}
+
+/** Cursor project folders are the cwd with "/" and "." turned into "-", which is ambiguous. Resolve by walking real directories. */
+export function resolveSlug(slug: string, base = "/"): string | null {
+  const parts = slug.split("-");
+  const go = (dir: string, i: number): string | null => {
+    if (i === parts.length) return dir;
+    for (let j = parts.length; j > i; j--) {
+      for (const name of [parts.slice(i, j).join("-"), "." + parts.slice(i, j).join("-")]) {
+        const next = join(dir, name);
+        if (existsSync(next)) { const r = go(next, j); if (r) return r; }
+      }
+    }
+    return null;
+  };
+  return go(base, 0);
+}
+
+function cursorAgents(now: number): Agent[] {
+  const root = join(process.env.CURSOR_HOME ?? join(HOME, ".cursor"), "projects");
+  const agents: Agent[] = [];
+  for (const { path, mtime } of recentFiles(root, 4, n => n.endsWith(".jsonl"), now)) {
+    const rel = path.slice(root.length + 1).split("/");
+    if (rel[1] !== "agent-transcripts" || rel.includes("subagents")) continue;
+    const cwd = resolveSlug(rel[0]!); if (!cwd) continue;
+    try {
+      const lines = jsonLines(tail(path));
+      const id = basename(path, ".jsonl");
+      agents.push({ id, name: `cur-${basename(cwd)}-${id.slice(0, 4)}`, source: "cursor", cwd, repo: null, state: state(now, mtime),
+        doing: lastTool(lines.map((l) => l.message?.content)), lastActive: mtime });
+    } catch {}
+  }
+  return agents;
+}
+
 function git(cwd: string, args: string[]): string | null {
   const r = Bun.spawnSync(["git", "-C", cwd, ...args], { stderr: "ignore" });
   return r.exitCode === 0 ? r.stdout.toString() : null;
@@ -194,7 +334,8 @@ function repoInfo(root: string): Omit<Repo, "agents"> {
 
 export function collect() {
   const now = Date.now();
-  const agents = [...jcodeAgents(now), ...claudeAgents(now)].sort((a, b) => b.lastActive - a.lastActive);
+  const piRoot = (dir: string) => join(HOME, dir, "agent", "sessions");
+  const agents = [...jcodeAgents(now), ...claudeAgents(now), ...codexAgents(now), ...piAgents(now, "omp", piRoot(".omp")), ...piAgents(now, "pi", piRoot(".pi")), ...opencodeAgents(now), ...cursorAgents(now)].sort((a, b) => b.lastActive - a.lastActive);
   const repos = new Map<string, Repo>();
   for (const a of agents) {
     a.repo = a.cwd ? repoRoot(a.cwd) : null;

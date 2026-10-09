@@ -5,7 +5,7 @@
 
   **A native desktop dashboard and voice control for your coding agents.**
 
-  Watch live [jcode](https://github.com/1jehuang/jcode) and [Claude Code](https://claude.com/claude-code) sessions, changed files, commands and diffs in one window. Talk to your agents instead of hunting for terminals.
+  Watch live [jcode](https://github.com/1jehuang/jcode), [Claude Code](https://claude.com/claude-code), [Codex](https://github.com/openai/codex), [Cursor](https://cursor.com), [oh-my-pi](https://github.com/can1357/oh-my-pi), [Pi](https://pi.dev) and [OpenCode](https://opencode.ai) sessions, changed files, commands and diffs in one window. Talk to your agents instead of hunting for terminals.
 
   [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   ![Runtime: Bun](https://img.shields.io/badge/runtime-Bun%201.3%2B-black)
@@ -18,7 +18,7 @@
 
 ## Features
 
-- **Agents.** Every active jcode and Claude Code session, whether it is working or idle, and what it just did. Click a jcode agent to focus its tmux window.
+- **Agents.** Every active session across your coding agents, working or idle, and what it just did. Click a jcode agent to focus its tmux window.
 - **Live diff.** Line-numbered, color-coded changes against `HEAD`, including untracked files. Refreshes about every 1.5 seconds.
 - **Change map.** Per-repository graph linking agents to changed files, with edit counts from observed journal edit tools.
 - **Commands.** Recent completed Bash calls with duration, a failures filter, and expandable raw command and error output.
@@ -26,7 +26,7 @@
 - **Settings.** Hold or toggle to talk, a rebindable in-app shortcut, saved on your device.
 - **Its own window.** GTK4 + WebKitGTK app window, not a browser tab. Local-only, nothing is sent anywhere unless you configure a cloud speech provider.
 
-Hubert reads `~/.jcode`, `~/.claude`, and git state for repositories that have a live agent. A session is **working** after recent transcript activity and **idle** when quiet.
+Hubert reads each agent's local session files plus git state for repositories that have a live agent. A session is **working** after recent transcript activity and **idle** when quiet.
 
 ## Install
 
@@ -48,11 +48,27 @@ bun install
 
 macOS has no WebKitGTK window yet. Run `bun start` and open `http://127.0.0.1:7777`. This is untested.
 
+## Supported agents
+
+| Agent | Shows up | Focus (tmux) | Send message | Interrupt | Verified |
+| --- | --- | --- | --- | --- | --- |
+| [jcode](https://github.com/1jehuang/jcode) | `~/.jcode` | yes | yes | yes, via the [jcode SDK](https://www.npmjs.com/package/@1jehuang/jcode-sdk) | live |
+| [Claude Code](https://claude.com/claude-code) | `~/.claude/projects` | no | no | no | real files |
+| [Codex](https://github.com/openai/codex) | `~/.codex/sessions` | no | no | no | real rollout file |
+| [oh-my-pi](https://github.com/can1357/oh-my-pi) | `~/.omp/agent/sessions` | no | no | no | docs only |
+| [Pi](https://pi.dev) | `~/.pi/agent/sessions` | no | no | no | docs only |
+| [OpenCode](https://opencode.ai) | `~/.local/share/opencode/opencode.db` (1.17+) | no | no | no | docs only |
+| [Cursor](https://cursor.com) | `~/.cursor/projects/*/agent-transcripts` | no | no | no | docs only |
+
+Only jcode exposes an inbound control API, so message and interrupt are jcode-only for now. "Docs only" means the reader follows the published session layout but has not been run against a real install. If one breaks for you, open an issue with a redacted sample line.
+
+Interrupting needs the jcode harness bridge. `hubert.sh` starts `jcode api-bridge` for you if it is not already running.
+
 ## Voice control
 
 Hold the mic button (or your shortcut) and speak. Simple requests such as focusing an agent or asking for status use a fast grammar. Anything else can go to a tool-less jcode model that proposes a plan, which Hubert checks against live agents and windows before running it.
 
-- Focus and status run immediately. Sending a message and moving or resizing a window need a click on **Do it**.
+- Focus and status run immediately. Sending a message, interrupting an agent, and moving or resizing a window need a click on **Do it**.
 - Hubert does **not** open or close windows or agents by voice. Hyprland arrangement is limited to validated move and resize.
 - Choose a speech-to-text connector with `HUBERT_STT`:
 
@@ -80,6 +96,8 @@ Click the gear in the header. Pick **hold to talk** or **toggle to talk** and re
 | `HUBERT_DEVTOOLS` | unset | Set to `1` for WebKit inspector in the window |
 | `JCODE_HOME` | `~/.jcode` | jcode data directory |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude Code data directory |
+| `CODEX_HOME` | `~/.codex` | Codex data directory |
+| `CURSOR_HOME` | `~/.cursor` | Cursor data directory |
 
 ## Privacy and safety
 
@@ -88,13 +106,14 @@ The server binds to loopback and rejects foreign `Host` and `Origin` headers. Lo
 ## Known limits
 
 - Edit counts come from recent journal tails and miss edits made through shell commands.
-- Focus works for jcode agents in titled tmux panes. Claude Code agents are shown but cannot be focused or messaged.
+- Focus works for jcode agents in titled tmux panes. Other agents are shown but cannot be focused, messaged or interrupted.
+- The command list and change map still read only jcode and Claude Code journals. Other agents appear in the agent list and in changed files by working directory.
 - Voice has been tested with a local Whisper socket. Groq, OpenAI and Deepgram are covered by mock-server tests only.
 - Microphone capture inside the WebKitGTK window has not been verified yet.
 
 ## Roadmap
 
-Global push to talk through a Hyprland keybind · per-agent edit attribution · agent-to-agent relay with loop guards · richer command history and stats · macOS window · more agent adapters (Codex, opencode).
+Global push to talk through a Hyprland keybind · per-agent edit attribution · agent-to-agent relay with loop guards · richer command history and stats · macOS window · command and edit parsing for Codex, omp, Pi, OpenCode and Cursor · message and interrupt for agents that gain a control API.
 
 ## Contributing
 

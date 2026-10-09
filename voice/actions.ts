@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { basename } from "path";
 import type { Action } from "./brain";
 import { collect } from "../state";
+import { cancelTurn } from "./sdk";
 
 export type Pane = { session: string; window: string; title: string };
 export type Window = { address: string; title: string; class: string; workspace: number };
@@ -89,9 +90,18 @@ export function statusOf(name: string): string {
   return `${a.name} is ${a.state}${a.repo ? ` in ${basename(a.repo)}` : ""}${a.doing ? `. Last: ${a.doing}` : ""}`;
 }
 
-export const NEEDS_CONFIRM = new Set<Action["type"]>(["send", "move", "resize"]);
+export const NEEDS_CONFIRM = new Set<Action["type"]>(["send", "stop", "move", "resize"]);
 
-export function execute(a: Action): string {
+/** Interrupt a running jcode turn through the harness API. Other agents expose no inbound control. */
+export async function stopAgent(name: string): Promise<string> {
+  const a = collect().agents.find((x) => x.name === name && (x.state === "working" || x.state === "idle"));
+  if (!a) throw new Error(`${name} is not running`);
+  if (a.source !== "jcode") throw new Error(`${name} is a ${a.source} agent: Hubert can only interrupt jcode agents (${a.source} has no inbound control API)`);
+  await cancelTurn(a.id);
+  return `Interrupted ${name}`;
+}
+
+export async function execute(a: Action): Promise<string> {
   switch (a.type) {
     case "focus": return focusAgent(a.agent);
     case "send": return sendToAgent(a.agent, a.text);
@@ -103,5 +113,6 @@ export function execute(a: Action): string {
       return `${a.type === "move" ? "Moved" : "Resized"} window ${a.address}`;
     }
     case "status": return statusOf(a.agent);
+    case "stop": return stopAgent(a.agent);
   }
 }

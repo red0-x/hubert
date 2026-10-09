@@ -109,10 +109,10 @@ const server = Bun.serve({
         const live = s.agents.filter((a) => a.state === "working" || a.state === "idle").map((a) => a.name);
         if ("agent" in action && !live.includes(action.agent)) return new Response(`unknown agent ${String(action.agent)}`, { status: 400 });
         if (action.type === "send" && (typeof action.text !== "string" || !action.text.trim() || action.text.length > 2000)) return new Response("bad text", { status: 400 });
-        if (!["focus", "send", "status", "move", "resize"].includes(action.type)) return new Response("unsupported action", { status: 400 });
+        if (!["focus", "send", "status", "stop", "move", "resize"].includes(action.type)) return new Response("unsupported action", { status: 400 });
         if (NEEDS_CONFIRM.has(action.type) && confirmed !== true) return new Response("this action needs confirmed: true", { status: 409 });
         try {
-          return Response.json({ result: execute(action) });
+          return Response.json({ result: await execute(action) });
         } catch (e) {
           return new Response((e as Error).message, { status: 422 });
         }

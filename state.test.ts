@@ -24,3 +24,23 @@ test("lastTool picks the newest tool_use and prefers intent", () => {
   expect(lastTool(msgs)).toBe("bash: List");
   expect(lastTool([])).toBeUndefined();
 });
+
+import { codexDoing, piDoing, resolveSlug } from "./state";
+import { mkdtempSync, mkdirSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
+test("codexDoing reads function_call JSON args and custom_tool_call JS", () => {
+  expect(codexDoing([{ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: '{"cmd":"ls -la"}' } }])).toBe("exec_command: ls -la");
+  expect(codexDoing([{ type: "response_item", payload: { type: "custom_tool_call", name: "exec", input: 'const r = await tools.exec_command({"cmd":"sed -n 1,5p x","yield_time_ms":1})' } }])).toBe("exec: sed -n 1,5p x");
+  expect(codexDoing([{ type: "event_msg", payload: {} }])).toBeUndefined();
+});
+test("piDoing reads toolCall blocks (omp and pi)", () => {
+  expect(piDoing([{ message: { content: [{ type: "text" }, { type: "toolCall", name: "bash", arguments: { command: "bun test" } }] } }])).toBe("bash: bun test");
+});
+test("resolveSlug disambiguates dashes and dots against real directories", () => {
+  const base = mkdtempSync(join(tmpdir(), "slug-"));
+  mkdirSync(join(base, "my-app", ".config"), { recursive: true });
+  expect(resolveSlug("my-app-config", base)).toBe(join(base, "my-app", ".config"));
+  expect(resolveSlug("nope", base)).toBeNull();
+});

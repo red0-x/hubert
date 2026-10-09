@@ -17,6 +17,12 @@ if ! up; then
   up || { echo "hubert: server failed to start, see $LOG" >&2; exit 1; }
 fi
 
+# jcode harness bridge (lets Hubert interrupt jcode agents). Optional, skipped if jcode is missing.
+SOCK="${JCODE_API_SOCKET:-${XDG_RUNTIME_DIR:-/tmp}/jcode-api.sock}"
+if command -v jcode >/dev/null && [ ! -S "$SOCK" ]; then
+  nohup jcode --quiet --no-update --no-selfdev api-bridge >/dev/null 2>&1 &
+fi
+
 # Native window (GTK4 + WebKitGTK). A second launch raises the existing window.
 python3 -c 'import gi; gi.require_version("WebKit","6.0"); gi.require_version("Gtk","4.0")' 2>/dev/null \
   || { echo "hubert: needs PyGObject + WebKitGTK 6 (Fedora: sudo dnf install python3-gobject webkitgtk6.0)" >&2; exit 1; }

@@ -5,6 +5,7 @@
     "": {
       "name": "hubert",
       "dependencies": {
+        "@1jehuang/jcode-sdk": "^1.1.0",
         "bun-plugin-tailwind": "^0.1.2",
         "class-variance-authority": "^0.7.1",
         "cn": "^0.4.0",
@@ -28,6 +29,20 @@
     },
   },
   "packages": {
+    "@1jehuang/jcode-darwin-arm64": ["@1jehuang/jcode-darwin-arm64@1.1.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-OoVrOeZ79TkKAk3TXnR858WoeaBOn+dFQC3kvN7YMVaq4TjvuwcFfxTO7ud1ciVmpPvXaHzPi8L776aPDAx5Hw=="],
+
+    "@1jehuang/jcode-darwin-x64": ["@1jehuang/jcode-darwin-x64@1.1.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-wsiE7Qzt5UkJV/v2O+NzKQuipZNvuXzi5vyXCDbJDF0fvojQsjZY2njpXGjxwlzcOp4fTesE4inuH/xqL71rDw=="],
+
+    "@1jehuang/jcode-linux-arm64": ["@1jehuang/jcode-linux-arm64@1.1.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-5s9VUitbpx4PSgdtNdgsGy2FtSNlJtQpsfb6RWX5E8QXHpnwlfsbXoq1PuU5kwWitJY07OYnB1P4xozObpA68Q=="],
+
+    "@1jehuang/jcode-linux-x64": ["@1jehuang/jcode-linux-x64@1.1.0", "", { "os": "linux", "cpu": "x64" }, "sha512-9w+VpnSZQrpU+lYy/I7a4NsRbPAUSN9DHIX8uoJ1uhlocJ6WPB77AxDp2I5zWUn5H09knlAkw2LgzvhWANzpbQ=="],
+
+    "@1jehuang/jcode-sdk": ["@1jehuang/jcode-sdk@1.1.0", "", { "dependencies": { "ajv": "^8.20.0" }, "optionalDependencies": { "@1jehuang/jcode-darwin-arm64": "1.1.0", "@1jehuang/jcode-darwin-x64": "1.1.0", "@1jehuang/jcode-linux-arm64": "1.1.0", "@1jehuang/jcode-linux-x64": "1.1.0", "@1jehuang/jcode-win32-arm64": "1.1.0", "@1jehuang/jcode-win32-x64": "1.1.0" } }, "sha512-A9QcerzdNb9yXsRaip38doZd/Z8IGGlAsjmdLuRl9IvpitkHwizzjh4+e3U6YEwyLygvOlgkiNdgvf0UMosvPg=="],
+
+    "@1jehuang/jcode-win32-arm64": ["@1jehuang/jcode-win32-arm64@1.1.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-Gcqvjit05CQH+ELC9G8bBYTciP8o8MzbVLUz8PFWJYmSXzbVlJEbQzr4/D29egPUSUrgAsti8rtqAmGIjIBN6A=="],
+
+    "@1jehuang/jcode-win32-x64": ["@1jehuang/jcode-win32-x64@1.1.0", "", { "os": "win32", "cpu": "x64" }, "sha512-ePRfhzPk6HQ94WZFEmKxztuhhw4ZkzyiCdJKa3v4ERAHAz4APLO16K6H53kDc+x04YvW7nurgcALWWKVF+8JGA=="],
+
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 
     "@babel/compat-data": ["@babel/compat-data@7.29.7", "", {}, "sha512-locTkQyKvwIEgBzVrn8693ebc97F2U8ZHjbXwDXJ5Fn2TCpNwTlKcaKLkdHop5c/icOFE7qt7Q9JC5hnKNa6Gg=="],

@@ -20,7 +20,7 @@ Run both checks before opening a PR. CI is not set up yet, so please paste the r
 | --- | --- |
 | `server.ts` | Local HTTP API, Host/Origin guard |
 | `state.ts`, `live.ts` | Agent discovery, git state, commands, edits, diffs |
-| `voice/` | Speech connectors, grammar, model planner, action executor |
+| `voice/` | Speech connectors, grammar, model planner, action executor, `sdk.ts` (jcode harness API) |
 | `src/` | React UI (shadcn components in `src/components/ui`) |
 | `hubert-window.py`, `hubert.sh` | Native window and launcher |
 
@@ -34,7 +34,7 @@ Run both checks before opening a PR. CI is not set up yet, so please paste the r
 
 ## Good first contributions
 
-- A journal adapter for another agent (Codex, opencode).
+- Verify an agent adapter against a real install (omp, Pi, OpenCode, Cursor are docs-only so far) or add command/edit parsing for Codex. Adapters live in `state.ts`.
 - A speech connector in `voice/stt.ts`.
 - A window-manager backend beyond Hyprland (sway, tmux-only, macOS).
 - Accessibility and keyboard-navigation fixes in the UI.

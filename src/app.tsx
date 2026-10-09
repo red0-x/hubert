@@ -23,7 +23,7 @@ type State = { now: number; agents: Agent[]; repos: Repo[] };
 
 type PlanAction = { type: string; agent?: string; text?: string; address?: string; x?: number; y?: number; width?: number; height?: number; targetTitle?: string; needsConfirm: boolean };
 const label = (a: PlanAction) =>
-  a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "move" ? `Move ${a.targetTitle ?? a.address} (${a.address}) to ${a.x}, ${a.y}` : a.type === "resize" ? `Resize ${a.targetTitle ?? a.address} (${a.address}) to ${a.width} × ${a.height}` : a.type === "focus" ? `Focus ${a.agent}` : `Status of ${a.agent}`;
+  a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "move" ? `Move ${a.targetTitle ?? a.address} (${a.address}) to ${a.x}, ${a.y}` : a.type === "resize" ? `Resize ${a.targetTitle ?? a.address} (${a.address}) to ${a.width} × ${a.height}` : a.type === "focus" ? `Focus ${a.agent}` : a.type === "stop" ? `Interrupt ${a.agent}` : `Status of ${a.agent}`;
 
 async function runAction(a: PlanAction, confirmed: boolean) {
   const { needsConfirm, ...action } = a;
