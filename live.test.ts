@@ -69,6 +69,24 @@ test("edit events count observed tool calls and skip malformed lines", () => {
     mkdirSync(root); mkdirSync(sessions); mkdirSync(claude);
     writeFileSync(join(sessions, "one.json"), JSON.stringify({ working_dir: root }));
     writeFileSync(join(sessions, "one.journal.jsonl"), ["broken", ...[1,2].map(() => JSON.stringify({ append_messages: [{ content: [{ type: "tool_use", name: "edit", input: { file_path: "a.ts" } }] }] }))].join("\n"));
-    expect(editEvents([{ root }], sessions, claude).map(e => e.path)).toEqual(["a.ts", "a.ts"]);
+    expect(editEvents([{ root }], sessions, claude, join(root, "no-codex")).map(e => e.path)).toEqual(["a.ts", "a.ts"]);
   } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+import { codexEdits } from "./live";
+import { mkdirSync as mk, mkdtempSync as tmp, writeFileSync as wf } from "fs";
+import { tmpdir as td } from "os";
+import { join as j } from "path";
+
+test("codexEdits reports successful patch_apply_end inside a repo, ignores failures and outside paths", () => {
+  const dir = tmp(j(td(), "cx-"));
+  const day = j(dir, "2026", "10", "09"); mk(day, { recursive: true });
+  const row = (success: boolean, file: string) => JSON.stringify({ timestamp: "2026-10-09T10:00:00Z", type: "event_msg", payload: { type: "patch_apply_end", success, changes: { [file]: { type: "update" } } } });
+  wf(j(day, "rollout-x-0123456789abcdef0123456789abcdef0123.jsonl"), [
+    JSON.stringify({ type: "turn_context", payload: { cwd: "/repo" } }),
+    row(true, "/repo/src/a.ts"), row(false, "/repo/src/b.ts"), row(true, "/elsewhere/c.ts"),
+  ].join("\n"));
+  const events = codexEdits([{ root: "/repo" }], dir);
+  expect(events.map((e) => e.path)).toEqual(["src/a.ts"]);
+  expect(events[0]!.agent.startsWith("cx-repo-")).toBe(true);
 });

@@ -19,7 +19,8 @@ export type EditEvent = { agent: string; root: string; path: string; ts: number 
 /** Count actual file-edit tool calls in recent journal tails, not git status snapshots. */
 export function editEvents(repos: { root: string }[],
   jcodeDir = join(process.env.JCODE_HOME ?? join(homedir(), ".jcode"), "sessions"),
-  claudeDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects")): EditEvent[] {
+  claudeDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects"),
+  codexDir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions")): EditEvent[] {
   const files = recentFiles(jcodeDir, ".journal.jsonl").map(path => ({ path, source: "jcode" }));
   try { for (const dir of readdirSync(claudeDir)) for (const path of recentFiles(join(claudeDir, dir), ".jsonl")) files.push({ path, source: "claude" }); } catch {}
   const events: EditEvent[] = [];
@@ -59,7 +60,40 @@ export function editEvents(repos: { root: string }[],
       }
     } catch {} // Rotating or malformed journals are not fatal.
   }
-  return events.slice(-500);
+  events.push(...codexEdits(repos, codexDir));
+  return events.sort((x, y) => x.ts - y.ts).slice(-500);
+}
+
+/** Codex records applied patches as event_msg/patch_apply_end with absolute paths and a success flag. Edits made through shell commands are not seen. */
+export function codexEdits(repos: { root: string }[], dir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions")): EditEvent[] {
+  const out: EditEvent[] = [];
+  const files: string[] = [];
+  const walk = (d: string, depth: number) => {
+    let names: string[]; try { names = readdirSync(d); } catch { return; }
+    for (const n of names) {
+      const path = join(d, n);
+      try {
+        if (statSync(path).isDirectory()) { if (depth > 0) walk(path, depth - 1); }
+        else if (n.endsWith(".jsonl") && Date.now() - statSync(path).mtimeMs < RECENT_MS) files.push(path);
+      } catch {}
+    }
+  };
+  walk(dir, 3);
+  for (const path of files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs).slice(0, 8)) {
+    let cwd = "";
+    for (const line of tail(path).split("\n")) {
+      let row: any; try { row = JSON.parse(line); } catch { continue; }
+      if (row.type === "turn_context") cwd = row.payload?.cwd ?? cwd;
+      if (row.type !== "event_msg" || row.payload?.type !== "patch_apply_end" || row.payload.success !== true) continue;
+      const agent = `cx-${basename(cwd || "codex")}-${basename(path, ".jsonl").slice(-36, -32)}`;
+      for (const file of Object.keys(row.payload.changes ?? {})) {
+        const absolute = resolve(cwd, file);
+        const repo = repos.find((r) => absolute.startsWith(r.root + sep));
+        if (repo) out.push({ agent, root: repo.root, path: relative(repo.root, absolute), ts: Date.parse(row.timestamp ?? "") || statSync(path).mtimeMs });
+      }
+    }
+  }
+  return out;
 }
 
 const RECENT_MS = 30 * 60_000;
