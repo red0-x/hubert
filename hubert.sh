@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Start the hubert server (if not running) and open/focus the dashboard window.
+# Start the hubert server (if not running) and open/focus the native dashboard window.
 #   HUBERT_PORT     port (default 7777)
-#   HUBERT_BROWSER  browser binary to use in --app mode (default: first Chromium-family browser found)
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 PORT="${HUBERT_PORT:-7777}"
@@ -18,17 +17,11 @@ if ! up; then
   up || { echo "hubert: server failed to start, see $LOG" >&2; exit 1; }
 fi
 
-# Chromium-family browsers on Wayland name app windows "<browser>-<host>__-Default".
+# Native window (GTK4 + WebKitGTK). A second launch raises the existing window.
+python3 -c 'import gi; gi.require_version("WebKit","6.0"); gi.require_version("Gtk","4.0")' 2>/dev/null \
+  || { echo "hubert: needs PyGObject + WebKitGTK 6 (Fedora: sudo dnf install python3-gobject webkitgtk6.0)" >&2; exit 1; }
 if command -v hyprctl >/dev/null && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
-  addr=$(hyprctl clients -j | jq -r '.[] | select(.class | endswith("-127.0.0.1__-Default")) | .address' | head -1)
+  addr=$(hyprctl clients -j | jq -r '.[] | select(.class=="dev.hubert.Hubert") | .address' | head -1)
   [ -n "$addr" ] && { hyprctl dispatch focuswindow "address:$addr" >/dev/null; exit 0; }
 fi
-
-for b in ${HUBERT_BROWSER:-} chromium google-chrome-stable google-chrome brave-browser brave microsoft-edge-stable vivaldi; do
-  if command -v "$b" >/dev/null; then
-    "$b" --app="$URL" --user-data-dir="${XDG_CACHE_HOME:-$HOME/.cache}/hubert-browser" >/dev/null 2>&1 &
-    exit 0
-  fi
-done
-echo "hubert: no Chromium-family browser found, opening $URL in your default browser"
-xdg-open "$URL" 2>/dev/null || open "$URL"
+HUBERT_PORT="$PORT" nohup python3 hubert-window.py >/dev/null 2>&1 &

@@ -12,7 +12,7 @@
 
 ## Get started
 
-Requires [Bun](https://bun.sh) 1.3+, git, and Linux or macOS. A Chromium-family browser is optional for the app window; otherwise use the local URL. Install [ffmpeg](https://ffmpeg.org) only if you want voice input.
+Requires [Bun](https://bun.sh) 1.3+, git, and Linux or macOS. The app window uses system GTK4 and WebKitGTK (Fedora: `sudo dnf install python3-gobject webkitgtk6.0`). Install [ffmpeg](https://ffmpeg.org) only if you want voice input.
 
 ```sh
 git clone https://github.com/red0-x/hubert.git
@@ -21,7 +21,7 @@ bun install
 ./hubert.sh
 ```
 
-`hubert.sh` serves the dashboard on `127.0.0.1:7777` and opens or focuses its app window when supported. For development, run `bun dev`; run tests with `bun test`.
+`hubert.sh` serves the dashboard on `127.0.0.1:7777` and opens or focuses its own native window. For development, run `bun dev`; run tests with `bun test`.
 
 ## Explore
 
@@ -55,7 +55,6 @@ Cloud STT requires the corresponding `GROQ_API_KEY`, `OPENAI_API_KEY`, or `DEEPG
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `HUBERT_PORT` | `7777` | Local server port |
-| `HUBERT_BROWSER` | first available Chromium-family browser | App-window browser |
 | `HUBERT_TERMINAL` | first supported terminal | Command prefix for the lazygit button |
 | `JCODE_HOME` | `~/.jcode` | jcode data directory |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude Code data directory |
