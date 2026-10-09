@@ -166,8 +166,10 @@ function App() {
 
   // In-app shortcut: only while Hubert is focused and not typing in a field or pressing a button.
   const { start, stop, cancel, state: voiceState } = voice;
+  const canRecord = !!voice.stt?.active;
   useEffect(() => {
     if (settingsOpen) { cancel(); return; }
+    if (!canRecord) return;
     const typing = (e: KeyboardEvent) => e.target instanceof HTMLElement && !!e.target.closest("input,textarea,select,button,[contenteditable]");
     const down = (e: KeyboardEvent) => {
       if (e.code === "Escape") return cancel();
@@ -179,7 +181,7 @@ function App() {
     const up = (e: KeyboardEvent) => { if (prefs.voiceMode === "hold" && e.code === prefs.shortcut) stop(); };
     addEventListener("keydown", down); addEventListener("keyup", up);
     return () => { removeEventListener("keydown", down); removeEventListener("keyup", up); };
-  }, [settingsOpen, prefs.shortcut, prefs.voiceMode, voiceState, start, stop, cancel]);
+  }, [settingsOpen, canRecord, prefs.shortcut, prefs.voiceMode, voiceState, start, stop, cancel]);
 
   useEffect(() => {
     let on = true;
