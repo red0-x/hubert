@@ -75,7 +75,7 @@ Hold the mic button (or your shortcut) and speak. Simple requests such as focusi
 | Variable | Purpose |
 | --- | --- |
 | `HUBERT_STT` | `whisper-socket`, `command`, `openai-compatible`, `groq`, `openai`, or `deepgram`. Default is the first configured **local** connector. |
-| `HUBERT_STT_SOCKET` | Warm local Whisper Unix socket |
+| `HUBERT_STT_SOCKET` | Warm local Whisper Unix socket. Defaults to `~/.jcode/dictation/whisper.sock` when present |
 | `HUBERT_STT_COMMAND` | Local command with a `{wav}` placeholder, e.g. `whisper-cli -m model.bin -f {wav}` |
 | `HUBERT_STT_URL`, `_KEY`, `_MODEL` | OpenAI-compatible endpoint, optional key and model |
 | `HUBERT_BRAIN` | Set `off` to disable model planning |

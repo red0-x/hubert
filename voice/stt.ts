@@ -1,6 +1,7 @@
 // Speech-to-text connectors. Every connector takes 16 kHz mono WAV bytes and returns text.
 // Pick one with HUBERT_STT (see README). All config comes from env so keys never touch the repo.
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { tmpdir } from "os";
 import { join } from "path";
 import { connect } from "net";
@@ -17,6 +18,8 @@ export type Connector = {
 };
 
 const env = (k: string) => process.env[k]?.trim() || undefined;
+/** HUBERT_STT_SOCKET, else the warm jcode dictation socket if it exists. */
+const whisperSocket = () => env("HUBERT_STT_SOCKET") ?? [env("HUBERT_DEFAULT_SOCKET") ?? join(homedir(), ".jcode", "dictation", "whisper.sock")].find(existsSync);
 const need = (...keys: string[]) => {
   const miss = keys.filter((k) => !env(k));
   return miss.length ? `set ${miss.join(", ")}` : null;
@@ -98,7 +101,7 @@ const socket: Connector = {
   id: "whisper-socket",
   label: "faster-whisper socket",
   kind: "local",
-  unavailable: () => need("HUBERT_STT_SOCKET"),
+  unavailable: () => (whisperSocket() ? null : "set HUBERT_STT_SOCKET"),
   async transcribe(wav) {
     const dir = mkdtempSync(join(tmpdir(), "hubert-stt-"));
     try {
@@ -106,7 +109,7 @@ const socket: Connector = {
       writeFileSync(path, wav);
       return await new Promise<string>((resolve, reject) => {
         const chunks: Buffer[] = [];
-        const s = connect(env("HUBERT_STT_SOCKET")!);
+        const s = connect(whisperSocket()!);
         const timer = setTimeout(() => (s.destroy(), reject(new Error("socket timeout"))), 60_000);
         s.on("connect", () => s.write(`F:${path}\n`));
         s.on("data", (d) => chunks.push(Buffer.from(d)));

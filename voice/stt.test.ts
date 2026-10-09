@@ -109,6 +109,7 @@ test("selection: HUBERT_STT wins, unknown id is null, no implicit API use", () =
   expect(activeConnector()).toBeNull();
   delete process.env.HUBERT_STT;
   delete process.env.HUBERT_STT_SOCKET;
+  process.env.HUBERT_DEFAULT_SOCKET = "/nonexistent/whisper.sock"; // keep the test independent of this machine
   process.env.HUBERT_STT_COMMAND = "";
   delete process.env.HUBERT_STT_URL;
   // keys are set (groq/deepgram) but they are api connectors, so nothing is chosen implicitly
