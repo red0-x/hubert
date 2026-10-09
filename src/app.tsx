@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BotIcon, GitBranchIcon, GitCompareIcon, MicIcon, TerminalIcon } from "lucide-react";
+import { BotIcon, GitBranchIcon, GitCompareIcon, MicIcon, SettingsIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { Agent, Repo } from "../state";
 import { useVoice } from "./use-voice";
+import { SettingsWindow, usePreferences } from "./settings";
 import { ChangeMap, CommandsView, DiffView } from "./live-view";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -154,12 +155,31 @@ function App() {
   const [s, setS] = useState<State | null>(null);
   const [stale, setStale] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
-  const [view, setView] = useState<"agents" | "map" | "commands" | "diff">("agents");
+  const [view, setView] = useState<"agents" | "map" | "commands" | "diff">(() => (["agents", "map", "commands", "diff"] as const).find(v => v === location.hash.slice(1)) ?? "agents");
   const [selectedFile, setSelectedFile] = useState<{ root: string; path: string } | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [prefs, setPrefs] = usePreferences();
   const voice = useVoice(
     handleSpeech,
     useCallback((msg: string) => toast.error(msg), []),
   );
+
+  // In-app shortcut: only while Hubert is focused and not typing in a field or pressing a button.
+  const { start, stop, cancel, state: voiceState } = voice;
+  useEffect(() => {
+    if (settingsOpen) { cancel(); return; }
+    const typing = (e: KeyboardEvent) => e.target instanceof HTMLElement && !!e.target.closest("input,textarea,select,button,[contenteditable]");
+    const down = (e: KeyboardEvent) => {
+      if (e.code === "Escape") return cancel();
+      if (e.code !== prefs.shortcut || e.repeat || e.ctrlKey || e.altKey || e.metaKey || typing(e)) return;
+      e.preventDefault();
+      if (prefs.voiceMode === "hold") start();
+      else if (voiceState === "listening") stop(); else start();
+    };
+    const up = (e: KeyboardEvent) => { if (prefs.voiceMode === "hold" && e.code === prefs.shortcut) stop(); };
+    addEventListener("keydown", down); addEventListener("keyup", up);
+    return () => { removeEventListener("keydown", down); removeEventListener("keyup", up); };
+  }, [settingsOpen, prefs.shortcut, prefs.voiceMode, voiceState, start, stop, cancel]);
 
   useEffect(() => {
     let on = true;
@@ -189,7 +209,7 @@ function App() {
   const kids = (id: string) => visible.filter((a) => a.parent === id);
   const working = s.agents.filter((a) => a.state === "working").length;
   const micOff = !voice.stt?.active;
-  const micTip = voice.stt?.active ? `Hold to talk (${voice.stt.active})` : "No speech-to-text connector configured, see README";
+  const micTip = voice.stt?.active ? `${prefs.voiceMode === "hold" ? "Hold" : "Click"} to talk (${voice.stt.active})` : "No speech-to-text connector configured, see README";
 
   return (
     <div className="flex h-svh flex-col">
@@ -206,10 +226,11 @@ function App() {
                   size="icon"
                   variant={voice.state === "listening" ? "default" : "outline"}
                   disabled={micOff || voice.state === "transcribing"}
-                  aria-label="Hold to talk"
-                  onPointerDown={voice.start}
-                  onPointerUp={voice.stop}
-                  onPointerLeave={voice.stop}
+                  aria-label={prefs.voiceMode === "hold" ? "Hold to talk" : "Toggle to talk"}
+                  onPointerDown={prefs.voiceMode === "hold" ? voice.start : undefined}
+                  onPointerUp={prefs.voiceMode === "hold" ? voice.stop : undefined}
+                  onPointerLeave={prefs.voiceMode === "hold" ? voice.stop : undefined}
+                  onClick={prefs.voiceMode === "toggle" ? () => (voice.state === "listening" ? voice.stop() : voice.start()) : undefined}
                 >
                   {voice.state === "transcribing" ? <Spinner /> : <MicIcon className={voice.state === "listening" ? "animate-pulse" : ""} />}
                 </Button>
@@ -217,6 +238,7 @@ function App() {
             </TooltipTrigger>
             <TooltipContent>{micTip}</TooltipContent>
           </Tooltip>
+          <Button size="icon" variant="ghost" aria-label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></Button>
           <Switch id="closed" size="sm" checked={showClosed} onCheckedChange={setShowClosed} />
           <Label htmlFor="closed" className="text-xs text-muted-foreground">
             closed
@@ -273,6 +295,7 @@ function App() {
           </>}
         </div>
       </ScrollArea>
+      <SettingsWindow open={settingsOpen} onClose={() => setSettingsOpen(false)} preferences={prefs} onChange={setPrefs} connector={voice.stt?.active ?? null} />
       <Toaster />
     </div>
   );

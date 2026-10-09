@@ -1,34 +1,29 @@
-# dependencies (bun install)
-node_modules
 
-# output
-out
-dist
-*.tgz
-
+.cache
+# caches
 # code coverage
 coverage
-*.lcov
-
-# logs
-logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
-
+# dependencies (bun install)
+dist
 # dotenv environment variable files
+.DS_Store
 .env
 .env.development.local
-.env.test.local
-.env.production.local
 .env.local
-
-# caches
+.env.production.local
+.env.test.local
 .eslintcache
-.cache
-*.tsbuildinfo
-
-# IntelliJ based IDEs
-.idea
-
 # Finder (MacOS) folder config
-.DS_Store
+.hubert-ui-probe
+.idea
+# IntelliJ based IDEs
+*.lcov
+_.log
+# logs
+logs
+node_modules
+out
+# output
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+*.tgz
+*.tsbuildinfo

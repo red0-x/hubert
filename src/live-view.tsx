@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Repo } from "../state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { parseDiff, type DiffLine } from "./diff";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Command = { agent: string; command: string; intent?: string; error?: string; ok: boolean; duration_ms?: number; ts: number };
@@ -45,6 +46,32 @@ export function CommandsView() {
     </CardContent></Card>;
 }
 
+const ROW: Record<DiffLine["kind"], string> = {
+  add: "bg-emerald-500/15",
+  del: "bg-red-500/15",
+  ctx: "",
+  hunk: "bg-primary/10 text-muted-foreground italic",
+  meta: "text-muted-foreground italic",
+};
+const MARK = { add: "+", del: "-", ctx: " ", hunk: "", meta: "" } as const;
+
+/** Numbered, colored diff rows. No syntax highlighter on purpose (would be a new dependency). */
+function DiffCode({ raw }: { raw: string }) {
+  const { lines } = parseDiff(raw);
+  if (!lines.length) return <p className="text-xs text-muted-foreground">No textual diff</p>;
+  return <div role="region" aria-label="Diff" tabIndex={0} className="max-h-[70vh] overflow-auto rounded-md border bg-background font-mono text-xs leading-5">
+    <table className="w-full border-collapse"><tbody>
+      {lines.map((l, i) => l.kind === "hunk"
+        ? <tr key={i} className={ROW.hunk}><td colSpan={3} className="px-3 py-1">@@ {l.text || "…"}</td></tr>
+        : <tr key={i} className={ROW[l.kind]}>
+          <td className="w-10 select-none pr-2 text-right text-muted-foreground/60 tabular-nums">{l.old ?? ""}</td>
+          <td className="w-10 select-none border-r pr-2 text-right text-muted-foreground/60 tabular-nums">{l.new ?? ""}</td>
+          <td className="whitespace-pre pl-2 pr-4"><span aria-hidden="true" className="select-none opacity-60">{MARK[l.kind]} </span>{l.text}</td>
+        </tr>)}
+    </tbody></table>
+  </div>;
+}
+
 export function DiffView({ repos, selected, onSelect }: { repos: Repo[]; selected: Selection; onSelect: (s: Selection) => void }) {
   const [diff, setDiff] = useState("");
   const [error, setError] = useState("");
@@ -59,7 +86,11 @@ export function DiffView({ repos, selected, onSelect }: { repos: Repo[]; selecte
     const timer = setInterval(refresh, 1500);
     return () => { active = false; clearInterval(timer); };
   }, [selected?.root, selected?.path]);
-  return <div className="grid min-h-0 gap-3 md:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]">
+  useEffect(() => {  // nothing picked yet: show the first changed file
+    if (!selected) { const r = repos.find(x => x.files.length); if (r) onSelect({ root: r.root, path: r.files[0]!.path }); }
+  }, [selected, repos]);
+  const stats = parseDiff(diff);
+  return <div className="grid min-h-0 gap-3 md:grid-cols-[minmax(12rem,1fr)_minmax(0,3fr)]">
     <Card size="sm"><CardHeader><CardTitle>Changed files</CardTitle></CardHeader><CardContent>
       {repos.map((r) => <div key={r.root} className="mb-3"><p className="mb-1 text-xs font-semibold">{r.name}</p>
         {r.files.map((f) => <Button key={f.path} variant={selected?.root === r.root && selected.path === f.path ? "secondary" : "ghost"}
@@ -67,9 +98,9 @@ export function DiffView({ repos, selected, onSelect }: { repos: Repo[]; selecte
           onClick={() => onSelect({ root: r.root, path: f.path })}>{f.status} {f.path}</Button>)}</div>)}
       {!repos.some((r) => r.files.length) && <p className="text-xs text-muted-foreground">No changed files.</p>}
     </CardContent></Card>
-    <Card size="sm" className="min-w-0"><CardHeader><CardTitle>{selected?.path ?? "Select a file"} <span className="text-xs font-normal text-muted-foreground">live diff vs HEAD</span></CardTitle></CardHeader>
+    <Card size="sm" className="min-w-0"><CardHeader><CardTitle className="flex flex-wrap items-baseline gap-2"><span className="break-all font-mono text-sm">{selected?.path ?? "Select a file"}</span>{selected && stats.lines.length > 0 && <span className="text-xs font-normal tabular-nums"><span className="text-emerald-400">+{stats.add}</span> <span className="text-red-400">-{stats.del}</span></span>}<span className="text-xs font-normal text-muted-foreground">live vs HEAD</span></CardTitle></CardHeader>
       <CardContent>{error && <p role="alert" className="text-destructive">{error}</p>}
-        <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted p-3 text-xs"><code>{selected ? diff || "No textual diff" : "Choose a changed file to inspect."}</code></pre>
+        {selected ? <DiffCode raw={diff} /> : <p className="text-xs text-muted-foreground">Choose a changed file to inspect.</p>}
       </CardContent></Card>
   </div>;
 }
