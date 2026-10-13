@@ -39,6 +39,24 @@ export function guard(req: Request, allowedHosts: Set<string> = ALLOWED_HOSTS): 
   return null;
 }
 
+// Optional sprite PNGs live in ./mascot (gitignored, except its README). Flat filenames only.
+export const MASCOT_DIR = "./mascot";
+const MASCOT_TYPES: Record<string, string> = { png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
+
+/** Serve /mascot/<name>. Rejects traversal, separators and non-image names before touching disk. */
+export function mascotRoute(req: Request): Response {
+  const denied = guard(req);
+  if (denied) return denied;
+  let name: string;
+  try { name = decodeURIComponent(new URL(req.url).pathname.slice("/mascot/".length)); }
+  catch { return new Response("bad mascot path", { status: 400 }); }
+  const match = /^([A-Za-z0-9_-]+)\.(png|webp|gif|svg)$/.exec(name);
+  if (!match) return new Response("bad mascot path", { status: 400 });
+  const file = Bun.file(`${MASCOT_DIR}/${match[0]}`);
+  if (!file.size) return new Response("not found", { status: 404 });
+  return new Response(file, { headers: { "content-type": MASCOT_TYPES[match[2]!] ?? "application/octet-stream" } });
+}
+
 export type Route = (req: Request) => Response | Promise<Response>;
 export type RouteTable = Record<string, Route | Partial<Record<string, Route>>>;
 
@@ -134,7 +152,8 @@ setInterval(() => { for (const client of pttClients) { try { client.enqueue(new 
 
 export const routes: RouteTable = {
     "/": index as unknown as Route,
-    "/docs/mascot.png": (req) => guard(req) ?? new Response(Bun.file("./docs/mascot.png"), { headers: { "content-type": "image/png" } }),
+    "/mascot/*": (req) => mascotRoute(req),
+    "/docs/logo.png": (req) => guard(req) ?? new Response(Bun.file("./docs/logo.png"), { headers: { "content-type": "image/png" } }),
     "/api/state": (req) => guard(req) ?? Response.json(collect()),
     "/api/commands": (req) => guard(req) ?? Response.json(recentCommands()),
     "/api/command-stats": (req) => guard(req) ?? Response.json(commandStats(recentCommands())),

@@ -27,3 +27,7 @@ out
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.tgz
 *.tsbuildinfo
+
+# user-supplied mascot sprites (README stays tracked)
+mascot/*
+!mascot/README.md

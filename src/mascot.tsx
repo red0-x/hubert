@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 const SIZE = 56;
-const STORAGE = "hubert.mascot.position";
 type Point = { x: number; y: number };
-const DEFAULT: Point = { x: 0.92, y: 0.82 };
 export const clamp = (n: number) => Math.min(1, Math.max(0, Number.isFinite(n) ? n : 0));
 export const bounds = (p: Point, width: number, height: number) => ({
   x: Math.round(clamp(p.x) * Math.max(0, width - Math.min(SIZE, width))),
@@ -11,6 +9,9 @@ export const bounds = (p: Point, width: number, height: number) => ({
 });
 
 export type MascotState = "idle" | "listening" | "thinking" | "speaking" | "error";
+
+/** Every pose we look for under /mascot/<state>.png. */
+export const MASCOT_STATES: MascotState[] = ["idle", "listening", "thinking", "speaking", "error"];
 
 /** How long a completed voice answer keeps Hubert in the `speaking` pose. */
 export const ANSWER_MS = 2500;
@@ -36,71 +37,38 @@ export function mascotState({ stale, error, voice, thinking, answeredAt, now }: 
   return "idle";
 }
 
-const LABEL: Record<MascotState, string> = {
-  idle: "idle",
-  listening: "listening",
-  thinking: "thinking",
-  speaking: "answered",
-  error: "error",
-};
+export const mascotSrc = (state: MascotState) => `/mascot/${state}.png`;
 
-/** Fixed viewport mascot. `state` drives its pose; `roam` enables slow wandering; changing `resetKey` restores the default position. */
-export function Mascot({ state = "idle", roam = false, resetKey }: { state?: MascotState; roam?: boolean; resetKey?: number }) {
-  const [point, setPoint] = useState<Point>(() => {
-    try {
-      const value = JSON.parse(localStorage.getItem(STORAGE) ?? "null");
-      return value && Number.isFinite(value.x) && Number.isFinite(value.y)
-        ? { x: clamp(value.x), y: clamp(value.y) } : DEFAULT;
-    } catch { return DEFAULT; }
-  });
-  const [size, setSize] = useState(() => ({ width: innerWidth, height: innerHeight }));
-  const [reduced, setReduced] = useState(false);
-  const drag = useRef<{ id: number; dx: number; dy: number } | null>(null);
-  const previousReset = useRef(resetKey);
+// Startup probe result per state, cached for the session so each sprite is HEAD-checked once.
+const available = new Map<MascotState, boolean>();
 
+/** HEAD-check one sprite once and remember the answer. */
+export async function hasMascotSprite(state: MascotState, fetcher: typeof fetch = fetch): Promise<boolean> {
+  const cached = available.get(state);
+  if (cached !== undefined) return cached;
+  let ok = false;
+  try {
+    ok = (await fetcher(mascotSrc(state), { method: "HEAD" })).ok;
+  } catch { ok = false; }
+  available.set(state, ok);
+  return ok;
+}
+
+/** Test hook: forget cached probe results. */
+export const resetMascotCache = () => available.clear();
+
+/**
+ * Optional sprite-ready character. Renders a small static image next to the mic only when
+ * /mascot/<state>.png exists (probed once at startup); otherwise renders nothing. No roam, drag or float.
+ */
+export function MascotCharacter({ state = "idle" }: { state?: MascotState }) {
+  const [ready, setReady] = useState<MascotState[]>([]);
   useEffect(() => {
-    const resize = () => setSize({ width: innerWidth, height: innerHeight });
-    window.addEventListener("resize", resize);
-    const query = matchMedia("(prefers-reduced-motion: reduce)");
-    const motion = () => setReduced(query.matches);
-    motion();
-    query.addEventListener("change", motion);
-    return () => { window.removeEventListener("resize", resize); query.removeEventListener("change", motion); };
+    let live = true;
+    Promise.all(MASCOT_STATES.map(async (s) => ((await hasMascotSprite(s)) ? s : null)))
+      .then((found) => { if (live) setReady(found.filter((s): s is MascotState => s !== null)); });
+    return () => { live = false; };
   }, []);
-  useEffect(() => {
-    if (previousReset.current === resetKey) return;
-    previousReset.current = resetKey;
-    setPoint(DEFAULT);
-  }, [resetKey]);
-  useEffect(() => { try { localStorage.setItem(STORAGE, JSON.stringify(point)); } catch { /* private browsing */ } }, [point]);
-  useEffect(() => {
-    if (!roam || reduced) return;
-    const timer = window.setInterval(() => {
-      if (!drag.current) setPoint(p => ({ x: clamp(p.x + (Math.random() - 0.5) * 0.08), y: clamp(p.y + (Math.random() - 0.5) * 0.06) }));
-    }, 5500);
-    return () => clearInterval(timer);
-  }, [roam, reduced]);
-
-  const pos = bounds(point, size.width, size.height);
-  const move = (x: number, y: number) => setPoint({
-    x: clamp(x / Math.max(1, size.width - Math.min(SIZE, size.width))),
-    y: clamp(y / Math.max(1, size.height - Math.min(SIZE, size.height))),
-  });
-  return <button type="button" className={`hubert-mascot-drag hubert-mascot-${state}`} data-state={state} aria-label={`Hubert mascot, ${LABEL[state]}; drag or use arrow keys to reposition`} title={`Hubert is ${LABEL[state]}. Drag or use arrow keys.`}
-    style={{ left: pos.x, top: pos.y, transition: drag.current ? "none" : undefined }}
-    onPointerDown={e => {
-      if (e.button !== 0) return;
-      drag.current = { id: e.pointerId, dx: e.clientX - pos.x, dy: e.clientY - pos.y };
-      e.currentTarget.setPointerCapture(e.pointerId);
-    }}
-    onPointerMove={e => { if (drag.current?.id === e.pointerId) move(e.clientX - drag.current.dx, e.clientY - drag.current.dy); }}
-    onPointerUp={e => { if (drag.current?.id === e.pointerId) drag.current = null; }}
-    onPointerCancel={e => { if (drag.current?.id === e.pointerId) drag.current = null; }}
-    onKeyDown={e => {
-      const offset: Record<string, [number, number]> = { ArrowLeft: [-10, 0], ArrowRight: [10, 0], ArrowUp: [0, -10], ArrowDown: [0, 10] };
-      const delta = offset[e.key];
-      if (delta) { e.preventDefault(); move(pos.x + delta[0], pos.y + delta[1]); }
-    }}>
-    <img src="/docs/mascot.png" alt="" draggable={false} className="hubert-mascot" />
-  </button>;
+  if (!ready.includes(state)) return null;
+  return <img src={mascotSrc(state)} alt="" data-state={state} className="hubert-character" draggable={false} />;
 }

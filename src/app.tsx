@@ -6,7 +6,7 @@ import type { Agent, Repo } from "../state";
 import { useVoice } from "./use-voice";
 import type { ViewDirective } from "../voice/intent";
 import { speak } from "./speech";
-import { Mascot, mascotState } from "./mascot";
+import { MascotCharacter, mascotState } from "./mascot";
 import { SettingsWindow, usePreferences } from "./settings";
 import { ChangeMap, CommandsView, DiffView } from "./live-view";
 import { cn } from "@/lib/utils";
@@ -245,11 +245,12 @@ function App() {
   return (
     <div className="flex h-svh flex-col">
       <header className="flex items-center gap-2 px-4 py-3">
-        <img src="/docs/mascot.png" alt="Hubert, the pink bespectacled blubber fish" className="hubert-mascot size-8 object-contain" />
+        <img src="/docs/logo.png" alt="hubert" className="size-7 object-contain" />
         <h1 className="font-semibold">hubert</h1>
         <Badge variant={working ? "default" : "secondary"}>{working} working</Badge>
         {stale && <Badge variant="destructive">stale</Badge>}
         <div className="ml-auto flex items-center gap-2">
+          <MascotCharacter state={mascot} />
           <Tooltip>
             <TooltipTrigger asChild>
               <span>
@@ -327,7 +328,6 @@ function App() {
         </div>
       </ScrollArea>
       <SettingsWindow open={settingsOpen} onClose={() => setSettingsOpen(false)} preferences={prefs} onChange={setPrefs} connector={voice.stt?.active ?? null} />
-      <Mascot state={mascot} />
       <Toaster />
     </div>
   );

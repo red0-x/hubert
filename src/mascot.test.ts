@@ -1,5 +1,6 @@
-import { test, expect } from "bun:test";
-import { ANSWER_MS, bounds, clamp, mascotState } from "./mascot";
+import { test, expect, beforeEach } from "bun:test";
+import { ANSWER_MS, bounds, clamp, hasMascotSprite, mascotState, resetMascotCache } from "./mascot";
+import { mascotRoute } from "../server";
 
 test("mascot coordinates stay in viewport, including tiny screens and malformed values", () => {
   expect(bounds({ x: 1, y: 1 }, 320, 200)).toEqual({ x: 264, y: 144 });
@@ -28,3 +29,30 @@ test("mascotState: speaking only inside the answer window", () => {
   expect(mascotState({ now: 5000 })).toBe("idle");
 });
 
+
+const PORT = Number(process.env.HUBERT_PORT ?? 7777);
+const HOST = `127.0.0.1:${PORT}`;
+const head = (path: string) => new Request(`http://${HOST}${path}`, { method: "HEAD", headers: { host: HOST } });
+
+beforeEach(() => resetMascotCache());
+
+test("hasMascotSprite probes once and caches the answer per state", async () => {
+  let calls = 0;
+  const hit = (async () => { calls++; return new Response(null, { status: 200 }); }) as unknown as typeof fetch;
+  expect(await hasMascotSprite("idle", hit)).toBe(true);
+  expect(await hasMascotSprite("idle", hit)).toBe(true);
+  expect(calls).toBe(1);
+  const miss = (async () => { calls++; return new Response(null, { status: 404 }); }) as unknown as typeof fetch;
+  expect(await hasMascotSprite("idle", miss)).toBe(true); // cached from the first probe
+  expect(calls).toBe(1);
+  const boom = (async () => { throw new Error("offline"); }) as unknown as typeof fetch;
+  expect(await hasMascotSprite("error", boom)).toBe(false);
+});
+
+test("mascotRoute rejects traversal and non-image names, 404s missing sprites", () => {
+  expect(mascotRoute(head("/mascot/../../etc/passwd")).status).toBe(400);
+  expect(mascotRoute(head("/mascot/%2e%2e%2fsecret.png")).status).toBe(400);
+  expect(mascotRoute(head("/mascot/idle.txt")).status).toBe(400);
+  expect(mascotRoute(head("/mascot/none.png")).status).toBe(404);
+  expect(mascotRoute(new Request(`http://evil.example/mascot/idle.png`, { headers: { host: "evil.example" } })).status).toBe(403);
+});
