@@ -133,7 +133,7 @@ export function VoicePanel({ preferences, paused = false, onSignal, applyView, o
       <div className="flex w-full max-w-4xl flex-col items-center gap-6 md:flex-row md:items-stretch">
         <div className="flex shrink-0 flex-col items-center justify-center gap-3">
           <MicButton mode={preferences.voiceMode} state={voiceState} micOff={micOff} level={level} onStart={start} onStop={stop} />
-          <p aria-live="polite" className="text-sm font-medium">
+          <p role="status" aria-live="polite" className="text-sm font-medium">
             {micOff ? "Microphone off" : voiceState === "starting" ? "Starting the microphone…" : listening ? "Listening…" : transcribing ? "Transcribing…" : thinking ? "Thinking…" : preferences.shortcut ? `${preferences.voiceMode === "hold" ? "Hold" : "Press"} ${shortcutLabel(preferences.shortcut)} to talk` : "Click the mic to talk"}
           </p>
           <LevelMeter level={level} active={listening} />

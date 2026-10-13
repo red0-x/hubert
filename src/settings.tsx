@@ -1,8 +1,46 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { DEFAULT_PREFERENCES, parsePreferences, PREFERENCES_KEY, shortcutLabel, validShortcut, type Preferences } from "./preferences";
 import { speechSupported } from "./speech";
+import { notificationsSupported } from "./alerts";
+
+// Mirrors DoctorReport from ../doctor.ts. Duplicated rather than imported so the client
+// bundle never pulls in the server-side node/Bun bits.
+type DoctorStatus = "ok" | "warn" | "error";
+type DoctorReport = { status: DoctorStatus; port: number; checks: { id: string; label: string; status: DoctorStatus; detail: string; hint?: string }[] };
+
+const DOCTOR_DOT: Record<DoctorStatus, string> = { ok: "bg-emerald-500", warn: "bg-amber-500", error: "bg-destructive" };
+
+/** First-run health check backed by GET /api/doctor. Re-fetched every time Settings opens. */
+function DoctorSection({ open }: { open: boolean }) {
+  const [report, setReport] = useState<DoctorReport | null>(null);
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(() => {
+    setFailed(false);
+    fetch("/api/doctor").then((r) => r.json() as Promise<DoctorReport>).then(setReport).catch(() => setFailed(true));
+  }, []);
+  useEffect(() => { if (open) load(); }, [open, load]);
+  return <section className="space-y-2">
+    <div className="flex items-center justify-between">
+      <h3 id="doctor-title" className="text-sm font-medium">Health check</h3>
+      <Button size="sm" variant="ghost" onClick={load}>Re-check</Button>
+    </div>
+    {failed ? <p className="text-xs text-destructive">Could not reach the server.</p>
+      : !report ? <p className="text-xs text-muted-foreground">Checking…</p>
+      : <ul className="space-y-2" aria-labelledby="doctor-title">
+        {report.checks.map((c) => <li key={c.id} className="flex gap-2 text-xs">
+          <span className={cn("mt-1 size-2 shrink-0 rounded-full", DOCTOR_DOT[c.status])} aria-label={c.status} role="img" />
+          <span className="min-w-0">
+            <span className="font-medium text-foreground">{c.label}</span>{" "}
+            <span className="break-words text-muted-foreground">{c.detail}</span>
+            {c.hint && <span className="block text-muted-foreground">{c.hint}</span>}
+          </span>
+        </li>)}
+      </ul>}
+  </section>;
+}
 
 export function usePreferences() {
   const [preferences, setPreferences] = useState<Preferences>(() => {
@@ -40,6 +78,12 @@ export function SettingsWindow({ open, onClose, preferences, onChange, connector
           <input type="checkbox" checked={preferences.speakReplies} onChange={event => onChange({ ...preferences, speakReplies: event.target.checked })} className="size-4 accent-current" />
         </label>
       </section>}
+      {notificationsSupported() && <section className="space-y-2">
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-3">
+          <span><span className="block text-sm font-medium">Desktop alerts</span><span className="text-xs text-muted-foreground">Notify when an agent finishes, loops or grows a big diff.</span></span>
+          <input type="checkbox" checked={preferences.notifyAlerts} onChange={event => onChange({ ...preferences, notifyAlerts: event.target.checked })} className="size-4 accent-current" />
+        </label>
+      </section>}
       <section className="space-y-2">
         <label htmlFor="voice-shortcut" className="text-sm font-medium">Keyboard shortcut</label>
         <div className="flex gap-2">
@@ -56,6 +100,7 @@ export function SettingsWindow({ open, onClose, preferences, onChange, connector
         <p id="shortcut-help" className="text-xs leading-relaxed text-muted-foreground">Choose a letter, number, Space, F8 or F9. Works only while Hubert is focused, outside text fields and buttons. Escape cancels recording.</p>
       </section>
       <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground"><span className="font-medium text-foreground">{connector ? `Speech connector: ${connector}` : "No speech connector configured"}</span><p className="mt-1">{connector ? "Recording stops if you leave Hubert or open settings." : "Configure a speech connector using the README before recording."}</p></div>
+      <DoctorSection open={open} />
     </div>
     <div className="flex items-center justify-between border-t px-5 py-3">
       <span className="text-xs text-muted-foreground">Saved on this device</span>
