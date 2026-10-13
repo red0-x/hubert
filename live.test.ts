@@ -125,3 +125,56 @@ test("codexCommands pairs exec cells with output, reads duration, and only fails
   const merged = recentCommands(j(empty, "jcode"), j(empty, "claude"), dir);
   expect(merged.map((c) => c.command)).toEqual(["false", "sed -n '1,240p' /repo/a.ts"]);
 });
+
+// Shapes below are copied from real ~/.claude/projects transcripts (claude 2.1.x): a Bash tool_use in an
+// assistant record, its tool_result in a later user record carrying is_error and its own timestamp.
+test("recentCommands reads Claude is_error and timestamp-gap duration, one stable agent per session, and skips sidechain files", () => {
+  const base = tmp(j(td(), "hubert-cc-cmd-"));
+  try {
+    const c = j(base, "claude"), none = j(base, "none");
+    const proj = j(c, "-home-red-Documents-GitHub-widget"); mk(proj, { recursive: true });
+    const sid = "dd1111-2222-4333-8444-555566667777";
+    writeFileSync(j(proj, `${sid}.jsonl`), [
+      JSON.stringify({ isSidechain: false, type: "assistant", timestamp: "2026-10-08T05:00:00.000Z", cwd: "/repo/sub", message: { role: "assistant", model: "claude-opus-5", content: [{ type: "tool_use", id: "a", name: "Bash", input: { command: "true", description: "ok" } }] } }),
+      JSON.stringify({ isSidechain: false, type: "user", timestamp: "2026-10-08T05:00:01.500Z", cwd: "/repo", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "a", is_error: false, content: "done" }] } }),
+      JSON.stringify({ isSidechain: false, type: "assistant", timestamp: "2026-10-08T05:00:02.000Z", cwd: "/repo", message: { role: "assistant", model: "claude-opus-5", content: [{ type: "tool_use", id: "b", name: "Bash", input: { command: "false" } }] } }),
+      JSON.stringify({ isSidechain: false, type: "user", timestamp: "2026-10-08T05:00:02.750Z", cwd: "/repo", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "b", is_error: true, content: "Exit code 1\nboom" }] } }),
+    ].join("\n") + "\n");
+    writeFileSync(j(proj, "agent-eeee.jsonl"), [
+      JSON.stringify({ isSidechain: true, type: "assistant", timestamp: "2026-10-08T05:00:03.000Z", cwd: "/repo", message: { role: "assistant", model: "claude-haiku-4-5", content: [{ type: "tool_use", id: "z", name: "Bash", input: { command: "sidechain-only" } }] } }),
+      JSON.stringify({ isSidechain: true, type: "user", timestamp: "2026-10-08T05:00:03.500Z", cwd: "/repo", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "z", is_error: false, content: "ok" }] } }),
+    ].join("\n") + "\n");
+    const cmds = recentCommands(j(none, "jcode"), c, j(none, "codex"));
+    expect(cmds.map((x) => x.command).sort()).toEqual(["false", "true"]);
+    // The newest cwd wins, so both commands carry the same agent even though the first ran from /repo/sub.
+    expect(cmds.find((x) => x.command === "true")).toMatchObject({ source: "claude", ok: true, duration_ms: 1500, agent: `cc-repo-${sid.slice(0, 4)}`, intent: "ok" });
+    expect(cmds.find((x) => x.command === "false")).toMatchObject({ ok: false, duration_ms: 750, error: "Exit code 1\nboom", agent: `cc-repo-${sid.slice(0, 4)}` });
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test("edit events map Claude Edit/Write/MultiEdit file_paths into the repo and skip sidechain files", () => {
+  const base = tmp(j(td(), "hubert-cc-edit-"));
+  try {
+    const root = j(base, "widget"), c = j(base, "claude");
+    mk(root); mk(j(c, "-home-red-widget"), { recursive: true });
+    const sid = "dd1111-2222-4333-8444-555566667777";
+    const abs = (p: string) => j(root, p);
+    writeFileSync(j(c, "-home-red-widget", `${sid}.jsonl`), [
+      JSON.stringify({ isSidechain: false, type: "assistant", timestamp: "2026-10-08T05:00:00.000Z", cwd: root, message: { role: "assistant", model: "claude-opus-5", content: [
+        { type: "tool_use", id: "e", name: "Edit", input: { file_path: abs("src/a.ts"), old_string: "x", new_string: "y" } },
+        { type: "tool_use", id: "w", name: "Write", input: { file_path: abs("src/b.ts"), content: "new" } },
+        { type: "tool_use", id: "m", name: "MultiEdit", input: { file_path: abs("src/c.ts"), edits: [] } },
+        { type: "tool_use", id: "o", name: "Write", input: { file_path: "/home/red/Documents/vault/note.md", content: "x" } },
+      ] } }),
+    ].join("\n") + "\n");
+    writeFileSync(j(c, "-home-red-widget", "agent-ffff.jsonl"), [
+      JSON.stringify({ isSidechain: true, type: "assistant", timestamp: "2026-10-08T05:00:01.000Z", cwd: root, message: { role: "assistant", model: "claude-haiku-4-5", content: [
+        { type: "tool_use", id: "s", name: "Edit", input: { file_path: abs("src/evil.ts"), old_string: "x", new_string: "y" } },
+      ] } }),
+    ].join("\n") + "\n");
+    const events = editEvents([{ root }], j(base, "none", "jcode"), c, j(base, "none", "codex"));
+    expect(events.map((e) => e.path).sort()).toEqual(["src/a.ts", "src/b.ts", "src/c.ts"]);
+    expect(new Set(events.map((e) => e.agent))).toEqual(new Set([`cc-widget-${sid.slice(0, 4)}`]));
+    expect(events.every((e) => e.root === root)).toBe(true);
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});

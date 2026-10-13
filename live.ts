@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "path";
 import { cachedTailLines, memo } from "./tail-cache";
+import { isSidechainTranscript } from "./state";
 
 // ponytail: one second, matching the client's 1.5s poll; the polled endpoints share one scan
 const LIVE_TTL = 1000;
@@ -43,10 +44,15 @@ function editEventsOnce(repos: { root: string }[], jcodeDir: string, claudeDir: 
         cwd = meta.working_dir ?? "";
         agent = meta.short_name ?? agent;
       }
-      for (const row of cachedTailLines(path, TAIL_BYTES)) {
-        cwd = row.meta?.working_dir ?? row.cwd ?? cwd;
-        if (source === "jcode") agent = row.meta?.short_name ?? agent;
-        else if (cwd) agent = `cc-${basename(cwd)}-${basename(path).slice(0, 4)}`;
+      const rows = cachedTailLines(path, TAIL_BYTES);
+      if (source === "claude" && isSidechainTranscript(rows)) continue; // subagent runs are not separate top-level agents
+      if (source === "claude") {
+        // A session records many cwds as commands cd around; use the newest so one session maps to one stable agent name.
+        cwd = rows.findLast((r) => r.cwd)?.cwd ?? cwd;
+        if (cwd) agent = `cc-${basename(cwd)}-${basename(path).slice(0, 4)}`;
+      }
+      for (const row of rows) {
+        if (source === "jcode") { cwd = row.meta?.working_dir ?? row.cwd ?? cwd; agent = row.meta?.short_name ?? agent; }
         const messages = source === "jcode" ? row.append_messages : [row.message];
         if (!Array.isArray(messages)) continue;
         for (const message of messages) for (const block of Array.isArray(message?.content) ? message.content : []) {
@@ -202,9 +208,15 @@ function recentCommandsOnce(jcodeDir: string, claudeDir: string, codexDir: strin
       if (source === "jcode") {
         try { agent = JSON.parse(readFileSync(path.replace(/\.journal\.jsonl$/, ".json"), "utf8")).short_name ?? agent; } catch {}
       }
-      for (const event of cachedTailLines(path, TAIL_BYTES)) {
+      const events = cachedTailLines(path, TAIL_BYTES);
+      if (source === "claude" && isSidechainTranscript(events)) continue; // subagent runs are not separate top-level agents
+      if (source === "claude") {
+        // A session records many cwds as commands cd around; pick one so every command from it carries the same agent name.
+        const cwd = events.findLast((e) => e.cwd)?.cwd;
+        if (cwd) agent = `cc-${basename(cwd)}-${basename(path).slice(0, 4)}`;
+      }
+      for (const event of events) {
         if (source === "jcode") agent = event.meta?.short_name ?? agent;
-        else if (event.cwd) agent = `cc-${basename(event.cwd)}-${basename(path).slice(0, 4)}`;
         const messages = source === "jcode" ? event.append_messages ?? [] : [event.message];
         const timestamp = Date.parse(event.timestamp ?? "") || fallback;
         for (const message of messages) {

@@ -26,7 +26,7 @@ test("lastTool picks the newest tool_use and prefers intent", () => {
   expect(lastTool([])).toBeUndefined();
 });
 
-import { codexDoing, piDoing, resolveSlug } from "./state";
+import { codexDoing, piDoing, resolveSlug, claudeAgents, claudeTitle, isSidechainTranscript } from "./state";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { basename, join } from "path";
@@ -74,4 +74,47 @@ test("repoInfo reads branch and changes through the async parallel git path", as
       ["b.txt", "??", 0, 0],
     ]);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// Shapes below are copied from real ~/.claude/projects transcripts (claude 2.1.x): ai-title carries the
+// session name, assistant records carry message.model plus the tool_use, user records carry its tool_result.
+test("claudeAgents reports model, last tool, title, working state, and hides sidechain transcripts", () => {
+  const base = mkdtempSync(join(tmpdir(), "hubert-cc-"));
+  try {
+    const proj = join(base, "-home-red-Documents-GitHub-widget");
+    mkdirSync(proj, { recursive: true });
+    const cwd = "/home/red/Documents/GitHub/widget";
+    const sid = "aaaa1111-2222-4333-8444-555566667777";
+    writeFileSync(join(proj, `${sid}.jsonl`), [
+      JSON.stringify({ type: "mode", mode: "normal", sessionId: sid }),
+      JSON.stringify({ type: "ai-title", aiTitle: "Widget refactor", sessionId: sid }),
+      JSON.stringify({ isSidechain: false, type: "assistant", timestamp: "2026-10-08T05:00:00.000Z", cwd, sessionId: sid,
+        message: { role: "assistant", model: "claude-opus-5", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "git status --short", description: "Check status" } }] } }),
+      JSON.stringify({ isSidechain: false, type: "user", timestamp: "2026-10-08T05:00:01.000Z", cwd, sessionId: sid,
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", is_error: false, content: " M a.ts" }] } }),
+    ].join("\n") + "\n");
+    // A subagent run is its own transcript with isSidechain:true everywhere; it is not a top-level agent.
+    writeFileSync(join(proj, "agent-bbbb2222.jsonl"), [
+      JSON.stringify({ isSidechain: true, type: "assistant", timestamp: "2026-10-08T05:00:02.000Z", cwd, sessionId: sid,
+        message: { role: "assistant", model: "claude-haiku-4-5", content: [{ type: "tool_use", id: "s1", name: "Read", input: { file_path: "/home/red/Documents/GitHub/widget/a.ts" } }] } }),
+    ].join("\n") + "\n");
+    const agents = claudeAgents(Date.now(), base);
+    expect(agents.map((a) => a.id)).toEqual([sid]);
+    expect(agents[0]).toMatchObject({ source: "claude", cwd, model: "claude-opus-5", title: "Widget refactor", state: "working", doing: "Bash: Check status" });
+    expect(agents[0]!.name).toBe(`cc-widget-${sid.slice(0, 4)}`);
+    expect(claudeAgents(Date.now() + 20_000, base)[0]!.state).toBe("idle"); // touched >15s ago but still recent
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test("claudeTitle prefers /rename custom-title, then ai-title, then slug", () => {
+  expect(claudeTitle([{ slug: "a" }, { type: "ai-title", aiTitle: "B" }, { slug: "c" }])).toBe("B");
+  expect(claudeTitle([{ slug: "a" }, { slug: "c" }])).toBe("c");
+  expect(claudeTitle([{ type: "custom-title", customTitle: "Named" }, { type: "ai-title", aiTitle: "B" }])).toBe("Named");
+  expect(claudeTitle([{ type: "mode" }])).toBeUndefined();
+});
+
+test("isSidechainTranscript keys off the newest isSidechain flag", () => {
+  expect(isSidechainTranscript([{ isSidechain: false }, { isSidechain: true }])).toBe(true);
+  expect(isSidechainTranscript([{ isSidechain: false }])).toBe(false);
+  expect(isSidechainTranscript([{ type: "ai-title" }])).toBe(false);
 });

@@ -47,6 +47,14 @@ export function lastTool(contents: any[][]): string | undefined {
   }
 }
 
+/**
+ * mtime in ms, or 0 when the path is gone. Journals and transcripts rotate while the dashboard
+ * scans them, so a file listed by readdir may be unlinked before it is stat'ed. Callers skip a 0.
+ */
+function mtimeOf(path: string): number {
+  try { return statSync(path).mtimeMs; } catch { return 0; }
+}
+
 function alive(pid?: number): boolean {
   if (!pid) return false;
   try { process.kill(pid, 0); return true; } catch { return false; }
@@ -67,16 +75,17 @@ function jcodeMeta(jsonPath: string): any {
   return meta;
 }
 
-function jcodeAgents(now: number): Agent[] {
+export function jcodeAgents(now: number, sessionsDir = JCODE_SESSIONS): Agent[] {
   let files: string[];
-  try { files = readdirSync(JCODE_SESSIONS); } catch { return []; }
+  try { files = readdirSync(sessionsDir); } catch { return []; }
   const agents: Agent[] = [];
   for (const f of files) {
     if (!f.endsWith(".journal.jsonl")) continue;
-    const journal = join(JCODE_SESSIONS, f);
+    const journal = join(sessionsDir, f);
     const id = f.slice(0, -".journal.jsonl".length);
-    const mtime = statSync(journal).mtimeMs;
-    const base = jcodeMeta(join(JCODE_SESSIONS, id + ".json"));
+    const mtime = mtimeOf(journal);
+    if (!mtime) continue; // journal rotated away between readdir and stat
+    const base = jcodeMeta(join(sessionsDir, id + ".json"));
     // ponytail: skips any session untouched for 30min unless meta says Active; 194 files stat is cheap
     if (now - mtime > RECENT_MS && base.status !== "Active") continue;
     const lines = cachedTailLines(journal, TAIL_BYTES);
@@ -105,19 +114,34 @@ function jcodeAgents(now: number): Agent[] {
   return agents;
 }
 
-function claudeAgents(now: number): Agent[] {
+/** Claude session title. An explicit /rename (custom-title) wins, then the generated ai-title, then the slug Claude stamps on every record. */
+export function claudeTitle(lines: any[]): string | undefined {
+  const custom = lines.findLast((l) => l.type === "custom-title" && typeof l.customTitle === "string")?.customTitle;
+  if (custom) return custom;
+  const ai = lines.findLast((l) => l.type === "ai-title" && typeof l.aiTitle === "string")?.aiTitle;
+  if (ai) return ai;
+  return lines.findLast((l) => typeof l.slug === "string")?.slug;
+}
+
+/** A subagent (sidechain) transcript records isSidechain:true on its records; the newest record tells the file apart from its main session. */
+export function isSidechainTranscript(lines: any[]): boolean {
+  return lines.findLast((l) => typeof l.isSidechain === "boolean")?.isSidechain === true;
+}
+
+export function claudeAgents(now: number, projectsDir = CLAUDE_PROJECTS): Agent[] {
   let dirs: string[];
-  try { dirs = readdirSync(CLAUDE_PROJECTS); } catch { return []; }
+  try { dirs = readdirSync(projectsDir); } catch { return []; }
   const agents: Agent[] = [];
   for (const d of dirs) {
     let files: string[];
-    try { files = readdirSync(join(CLAUDE_PROJECTS, d)); } catch { continue; }
+    try { files = readdirSync(join(projectsDir, d)); } catch { continue; }
     for (const f of files) {
       if (!f.endsWith(".jsonl")) continue;
-      const p = join(CLAUDE_PROJECTS, d, f);
-      const mtime = statSync(p).mtimeMs;
-      if (now - mtime > RECENT_MS) continue;
+      const p = join(projectsDir, d, f);
+      const mtime = mtimeOf(p);
+      if (!mtime || now - mtime > RECENT_MS) continue; // gone, or untouched for 30 min
       const lines = cachedTailLines(p, TAIL_BYTES);
+      if (isSidechainTranscript(lines)) continue; // subagent runs are not top-level agents
       const cwd = lines.findLast((l) => l.cwd)?.cwd;
       if (!cwd) continue;
       const id = f.slice(0, -6);
@@ -128,6 +152,7 @@ function claudeAgents(now: number): Agent[] {
         cwd,
         repo: null,
         model: lines.findLast((l) => l.message?.model)?.message.model,
+        title: claudeTitle(lines),
         state: now - mtime < WORKING_MS ? "working" : "idle",
         doing: lastTool(lines.filter((l) => l.type === "assistant").map((l) => l.message?.content)),
         lastActive: mtime,
