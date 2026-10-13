@@ -123,7 +123,9 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
       release = () => { if (!released) { released = true; stopLevel(); if (stopTimer) clearTimeout(stopTimer); stream.getTracks().forEach(t => t.stop()); } };
       if (disposed || id !== generation) { release(); return; }
       releaseActive = release;
-      const r = new MediaRecorder(stream);
+      // WebKitGTK's default container is MP4, which records 0 bytes there. Ask for WebM/Opus explicitly (verified in WebKitGTK).
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find(t => MediaRecorder.isTypeSupported?.(t));
+      const r = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       const type = () => r.mimeType || "audio/webm";
       const chunks: Blob[] = [];
       // One cumulative preview at a time: the whole clip so far is a decodable prefix of the same
