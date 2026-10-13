@@ -7,6 +7,7 @@ type Stt = { active: string | null; connectors: { id: string; label: string; kin
 export function useVoice(onText: (text: string, connector: string, ms?: number) => void, onError: (msg: string) => void) {
   const [state, setState] = useState<VoiceState>("idle");
   const [level, setLevel] = useState(0);
+  const [draft, setDraft] = useState("");
   const [stt, setStt] = useState<Stt | null>(null);
   const recorder = useRef<ReturnType<typeof createVoiceRecorder> | null>(null);
   const pttActive = useRef(false);
@@ -17,12 +18,17 @@ export function useVoice(onText: (text: string, connector: string, ms?: number) 
   useEffect(() => {
     let active = true;
     recorder.current = createVoiceRecorder(
-      setState,
+      // A new hold starts a clean draft; a stale preview must never show against fresh audio.
+      (s) => { if (s === "starting") setDraft(""); setState(s); },
       (text, connector, ms) => callbacks.current.onText(text, connector, ms),
       message => callbacks.current.onError(message),
       setLevel,
       // Refuse to open the mic when nothing can transcribe it, instead of recording into the void.
       () => (sttRef.current?.active ? null : "No speech connector configured. Set HUBERT_STT (see README) and restart Hubert."),
+      // Provisional text only updates the UI; the final transcript still goes through onText once.
+      setDraft,
+      // Live previews are free chat with a local whisper; never quietly bill a cloud STT per snapshot.
+      () => sttRef.current?.connectors.find((c) => c.id === sttRef.current?.active)?.kind === "local",
     );
     fetch("/api/stt").then(r => r.json() as Promise<Stt>).then(data => { sttRef.current = data; if (active) setStt(data); }).catch(() => {});
     // Global hotkey: the server owns start/stop so it works while the window is not focused.
@@ -48,5 +54,5 @@ export function useVoice(onText: (text: string, connector: string, ms?: number) 
   const start = useCallback(() => { void recorder.current?.start(); }, []);
   const stop = useCallback(() => recorder.current?.stop(), []);
   const cancel = useCallback(() => recorder.current?.cancel(), []);
-  return { state, level, stt, start, stop, cancel };
+  return { state, level, draft, stt, start, stop, cancel };
 }

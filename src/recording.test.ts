@@ -27,10 +27,13 @@ class Recorder {
   static instances: Recorder[] = [];
   state = "inactive";
   mimeType = "audio/webm";
+  timeslice = 0;
   ondataavailable: ((e: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
   constructor(_stream: MediaStream) { Recorder.instances.push(this); }
-  start() { this.state = "recording"; }
+  start(timeslice?: number) { this.state = "recording"; this.timeslice = timeslice ?? 0; }
+  /** A growing snapshot mid-hold, exactly what MediaRecorder's timeslice emits. */
+  emit(bytes = 3000) { this.ondataavailable?.({ data: new Blob([new Uint8Array(bytes)]) }); }
   stop() {
     this.state = "inactive";
     queueMicrotask(() => {
@@ -39,6 +42,7 @@ class Recorder {
     });
   }
 }
+const lastRecorder = () => Recorder.instances[Recorder.instances.length - 1]!;
 beforeEach(() => {
   stopped = 0; uploads = 0; clock = 1_000_000; Recorder.instances = [];
   Date.now = () => clock;
@@ -159,4 +163,109 @@ test("recording initialization errors release tracks and return to idle", async 
   expect(stopped).toBe(1);
   expect(states.at(-1)).toBe("idle");
   expect(errors).toHaveLength(1);
+});
+
+test("holding shows a provisional preview but the final transcript is sent exactly once on release", async () => {
+  let calls = 0;
+  const sizes: number[] = [];
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => { calls++; sizes.push((init?.body as Blob).size); return Response.json({ text: calls <= 2 ? "draft words" : "final words", connector: "local", ms: 1 }); }) as unknown as typeof fetch;
+  const previews: string[] = []; const finals: string[] = [];
+  const recorder = createVoiceRecorder(() => {}, t => finals.push(t), () => {}, undefined, undefined, t => previews.push(t), () => true);
+  await recorder.start();
+  const r = lastRecorder();
+  expect(r.timeslice).toBeGreaterThan(0); // snapshots are requested from MediaRecorder at all
+  r.emit(3000); await Bun.sleep(0); // under PREVIEW_MIN_MS: no preview yet
+  clock += 1000; r.emit(3000); await Bun.sleep(0); // first preview
+  clock += 1000; r.emit(3000); await Bun.sleep(0); // under PREVIEW_INTERVAL_MS: throttled
+  clock += 1000; r.emit(3000); await Bun.sleep(0); // second preview
+  expect(previews).toEqual(["draft words", "draft words"]);
+  expect(finals).toEqual([]); // a preview never reaches the final transcript path
+  clock += 1000; recorder.stop(); await Bun.sleep(0);
+  expect(finals).toEqual(["final words"]);
+  expect(calls).toBe(3); // two snapshots + one final upload
+  expect(sizes[2]).toBeGreaterThan(sizes[1]!); // the final carries the whole clip, not a snapshot
+});
+
+test("release waits for an in-flight preview and drops its late result", async () => {
+  let resolvePreview!: () => void;
+  let calls = 0;
+  globalThis.fetch = ((_url: string, _init?: RequestInit) => {
+    calls++;
+    if (calls === 1) return new Promise<Response>(res => { resolvePreview = () => res(Response.json({ text: "late preview", connector: "local" })); });
+    return Promise.resolve(Response.json({ text: "final words", connector: "local", ms: 1 }));
+  }) as unknown as typeof fetch;
+  const previews: string[] = []; const finals: string[] = [];
+  const recorder = createVoiceRecorder(() => {}, t => finals.push(t), () => {}, undefined, undefined, t => previews.push(t), () => true);
+  await recorder.start();
+  const r = lastRecorder();
+  clock += 1000; r.emit(3000); await Bun.sleep(0);
+  clock += 1000; r.emit(3000); await Bun.sleep(0); // a preview is in flight
+  clock += 1000;
+  recorder.stop();
+  await Bun.sleep(0);
+  expect(calls).toBe(1); // no final upload has started while the preview holds the socket
+  resolvePreview();
+  await Bun.sleep(0); await Bun.sleep(0);
+  expect(calls).toBe(2); // exactly one final upload, after the preview settled
+  expect(finals).toEqual(["final words"]);
+  expect(previews).toEqual([]); // the preview resolved after release, so it never overwrote the final
+});
+
+test("cancel during a hold aborts the preview and sends no transcript", async () => {
+  let aborted = false;
+  globalThis.fetch = ((_url: string, init?: RequestInit) => new Promise<Response>((_res, rej) => {
+    init?.signal?.addEventListener("abort", () => { aborted = true; rej(Object.assign(new Error("aborted"), { name: "AbortError" })); });
+  })) as unknown as typeof fetch;
+  const previews: string[] = []; const finals: string[] = []; const states: string[] = [];
+  const recorder = createVoiceRecorder(s => states.push(s), t => finals.push(t), () => {}, undefined, undefined, t => previews.push(t), () => true);
+  await recorder.start();
+  const r = lastRecorder();
+  clock += 1000; r.emit(3000); await Bun.sleep(0);
+  clock += 1000; r.emit(3000); await Bun.sleep(0);
+  expect(previews).toEqual([]);
+  recorder.cancel();
+  await Bun.sleep(0); await Bun.sleep(0);
+  expect(aborted).toBe(true);
+  expect(finals).toEqual([]);
+  expect(stopped).toBe(1);
+  expect(states.at(-1)).toBe("idle");
+});
+
+test("no snapshot is uploaded when previews are not allowed (e.g. a cloud connector)", async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; return Response.json({ text: "final words", connector: "cloud", ms: 1 }); }) as unknown as typeof fetch;
+  const previews: string[] = []; const finals: string[] = [];
+  const recorder = createVoiceRecorder(() => {}, t => finals.push(t), () => {}, undefined, undefined, t => previews.push(t), () => false);
+  await recorder.start();
+  const r = lastRecorder();
+  clock += 1000; r.emit(3000); await Bun.sleep(0);
+  clock += 1000; r.emit(3000); await Bun.sleep(0);
+  expect(calls).toBe(0); // the cloud connector is never charged for a snapshot
+  clock += 1000; recorder.stop(); await Bun.sleep(0);
+  expect(calls).toBe(1);
+  expect(previews).toEqual([]);
+  expect(finals).toEqual(["final words"]);
+});
+
+test("a hold shorter than MIN_RECORDING_MS is ignored even with previews enabled", async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; return Response.json({ text: "x", connector: "local" }); }) as unknown as typeof fetch;
+  const errors: string[] = [];
+  const recorder = createVoiceRecorder(() => {}, () => { throw new Error("unexpected transcript"); }, m => errors.push(m), undefined, undefined, () => {}, () => true);
+  await recorder.start();
+  lastRecorder().emit(3000); await Bun.sleep(0);
+  clock += 120;
+  recorder.stop(); await Bun.sleep(0);
+  expect(calls).toBe(0);
+  expect(errors[0]).toMatch(/too short/i);
+});
+
+test("a denied microphone surfaces the message and never starts a preview", async () => {
+  navigator.mediaDevices.getUserMedia = async () => { throw Object.assign(new Error("denied"), { name: "NotAllowedError" }); };
+  const errors: string[] = []; let previews = 0;
+  const recorder = createVoiceRecorder(() => {}, () => {}, m => errors.push(m), undefined, undefined, () => { previews++; }, () => true);
+  await recorder.start();
+  expect(errors[0]).toMatch(/Allow microphone/);
+  expect(previews).toBe(0);
+  expect(Recorder.instances).toHaveLength(0);
 });

@@ -5,6 +5,17 @@ export const MIN_RECORDING_MS = 300;
 /** Peak level (see normalizeLevel) below which a clip is treated as silence rather than speech. */
 export const MIN_SPEECH_LEVEL = 0.05;
 
+/** While holding, MediaRecorder emits a snapshot this often; a snapshot is the whole clip so far. */
+export const PREVIEW_TIMESLICE_MS = 1000;
+/** Smallest gap between preview requests; a long hold must not hammer whisper. */
+export const PREVIEW_INTERVAL_MS = 1800;
+/** Earliest a preview is worth asking for (whisper returns nothing for a tiny clip). */
+export const PREVIEW_MIN_MS = 900;
+/** Hard cap on previews per recording, bounding request count. */
+export const MAX_PREVIEWS = 40;
+/** Hard cap on one recording, bounding retained audio and whisper work. */
+export const MAX_RECORDING_MS = 120_000;
+
 /** getUserMedia failures turn into something a human can act on. */
 export function micError(error: unknown): string {
   const e = error as { name?: string; message?: string } | null;
@@ -69,14 +80,20 @@ function attachLevelMeter(stream: MediaStream, onLevel?: (level: number) => void
 /**
  * Own microphone lifetime independently of pointer/key gestures and React rerenders.
  * notReady() returns a message when recording must not start at all (e.g. no speech connector configured).
+ * onPreview receives provisional text from growing snapshots while the user is still holding; it is
+ * UI-only and never a command. The only transcript that acts arrives through onText on release.
+ * previewAllowed gates snapshots (e.g. only for a free local connector, never to bill a cloud STT).
  */
-export function createVoiceRecorder(onState: (state: VoiceState) => void, onText: (text: string, connector: string, ms?: number) => void, onError: (message: string) => void, onLevel?: (level: number) => void, notReady?: () => string | null) {
+export function createVoiceRecorder(onState: (state: VoiceState) => void, onText: (text: string, connector: string, ms?: number) => void, onError: (message: string) => void, onLevel?: (level: number) => void, notReady?: () => string | null, onPreview?: (text: string) => void, previewAllowed?: () => boolean) {
   let state: VoiceState = "idle";
   let generation = 0;
   let disposed = false;
   let recorder: MediaRecorder | null = null;
   let releaseActive: (() => void) | null = null;
   let upload: AbortController | null = null;
+  let previewAbort: AbortController | null = null;
+  let previewInFlight: Promise<void> | null = null;
+  let releasing = false;
   const update = (next: VoiceState) => { state = next; if (!disposed) onState(next); };
 
   async function start() {
@@ -85,6 +102,7 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
     if (blocked) return onError(blocked);
     if (!navigator.mediaDevices?.getUserMedia) return onError("Microphone is not available in this window");
     const id = ++generation;
+    releasing = false;
     update("starting");
     let release: (() => void) | undefined;
     try {
@@ -94,25 +112,62 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
       const startedAt = Date.now();
       let peak = 0; // loudest sample seen, used as a cheap VAD
       let metered = false;
+      let stopTimer: ReturnType<typeof setTimeout> | undefined;
+      let previewAt = 0;
+      let previews = 0;
       const onSample = (level: number) => { if (level > peak) peak = level; onLevel?.(level); };
-      release = () => { if (!released) { released = true; stopLevel(); stream.getTracks().forEach(t => t.stop()); } };
+      release = () => { if (!released) { released = true; stopLevel(); if (stopTimer) clearTimeout(stopTimer); stream.getTracks().forEach(t => t.stop()); } };
       if (disposed || id !== generation) { release(); return; }
       releaseActive = release;
       const r = new MediaRecorder(stream);
+      const type = () => r.mimeType || "audio/webm";
       const chunks: Blob[] = [];
-      r.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+      // One cumulative preview at a time: the whole clip so far is a decodable prefix of the same
+      // MediaRecorder stream, and the warm whisper socket serves one request at a time.
+      const preview = () => {
+        if (!onPreview || (previewAllowed && !previewAllowed())) return;
+        if (disposed || id !== generation || releasing || previewInFlight || state !== "listening") return;
+        const now = Date.now();
+        if (now - previewAt < PREVIEW_INTERVAL_MS || now - startedAt < PREVIEW_MIN_MS || previews >= MAX_PREVIEWS) return;
+        if (!chunks.length) return;
+        const blob = new Blob(chunks.slice(), { type: type() });
+        if (blob.size < 2000) return;
+        previewAt = now; previews++;
+        const controller = new AbortController();
+        previewAbort = controller;
+        const pending = (async () => {
+          try {
+            const response = await fetch("/api/transcribe", { method: "POST", headers: { "content-type": type() }, body: blob, signal: controller.signal });
+            if (!response.ok) return;
+            const result = await response.json() as { text?: string };
+            if (disposed || id !== generation || releasing) return; // a late preview never overwrites the final
+            const text = (result.text ?? "").trim();
+            if (text) onPreview(text);
+          } catch {
+            // Best-effort: a dropped or failed preview is not the user's problem and never a final error.
+          } finally {
+            if (previewAbort === controller) previewAbort = null;
+          }
+        })();
+        previewInFlight = pending;
+        void pending.finally(() => { if (previewInFlight === pending) previewInFlight = null; });
+      };
+      r.ondataavailable = e => { if (e.data.size) chunks.push(e.data); preview(); };
       r.onstop = async () => {
         release!();
         if (recorder === r) { recorder = null; releaseActive = null; }
         if (disposed || id !== generation) return;
-        const blob = new Blob(chunks, { type: r.mimeType });
+        // Never overlap the final upload with a preview: wait the last preview out first (it holds the socket).
+        if (previewInFlight) { try { await previewInFlight; } catch {} }
+        if (disposed || id !== generation) return;
+        const blob = new Blob(chunks, { type: type() });
         if (Date.now() - startedAt < MIN_RECORDING_MS || blob.size < 2000) { update("idle"); onError("Recording too short, ignored. Hold the mic a little longer."); return; }
         if (metered && peak < MIN_SPEECH_LEVEL) { update("idle"); onError("Heard only silence. Check the input device and speak closer to the mic."); return; }
         update("transcribing");
         const controller = new AbortController();
         upload = controller;
         try {
-          const response = await fetch("/api/transcribe", { method: "POST", headers: { "content-type": r.mimeType || "audio/webm" }, body: blob, signal: controller.signal });
+          const response = await fetch("/api/transcribe", { method: "POST", headers: { "content-type": type() }, body: blob, signal: controller.signal });
           if (!response.ok) throw new Error(`transcription failed (${response.status}): ${await response.text()}`);
           const result = await response.json() as { text: string; connector: string; ms?: number };
           if (disposed || id !== generation) return;
@@ -126,7 +181,8 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
         }
       };
       recorder = r;
-      r.start();
+      r.start(PREVIEW_TIMESLICE_MS);
+      stopTimer = setTimeout(() => { if (!disposed && id === generation && state === "listening") stop(); }, MAX_RECORDING_MS);
       const meter = attachLevelMeter(stream, onSample);
       stopLevel = meter.stop;
       metered = meter.metered;
@@ -142,10 +198,13 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
 
   function stop() {
     if (state === "starting") { generation++; update("idle"); }
-    else if (recorder?.state === "recording") { update("transcribing"); recorder.stop(); }
+    else if (recorder?.state === "recording") { releasing = true; update("transcribing"); recorder.stop(); }
   }
   function cancel() {
     generation++;
+    releasing = true;
+    previewAbort?.abort(); previewAbort = null;
+    previewInFlight = null;
     upload?.abort(); upload = null;
     releaseActive?.(); releaseActive = null;
     if (recorder?.state === "recording") recorder.stop();

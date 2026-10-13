@@ -3,7 +3,7 @@ import { AlertTriangleIcon, ArrowRightIcon, CheckIcon, InfoIcon, MicIcon, Settin
 import { toast } from "sonner";
 import type { ViewDirective } from "../voice/intent";
 import { shortcutLabel, type Preferences } from "./preferences";
-import { speak } from "./speech";
+import { speakReply } from "./speech";
 import { useVoice, type VoiceState } from "./use-voice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,15 +17,13 @@ export const actionLabel = (a: PlanAction) =>
   a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "move" ? `Move ${a.targetTitle ?? a.address} (${a.address}) to ${a.x}, ${a.y}` : a.type === "resize" ? `Resize ${a.targetTitle ?? a.address} (${a.address}) to ${a.width} × ${a.height}` : a.type === "focus" ? `Focus ${a.agent}` : a.type === "stop" ? `Interrupt ${a.agent}` : `Status of ${a.agent}`;
 
 /** Execute one plan action. Returns the result text, or null when it failed (already toasted). */
-export async function runAction(a: PlanAction, confirmed: boolean, speakReplies = false): Promise<string | null> {
+export async function runAction(a: PlanAction, confirmed: boolean, _speakReplies = false): Promise<string | null> {
   const { needsConfirm, ...action } = a;
   const r = await fetch("/api/execute", { method: "POST", body: JSON.stringify({ action, confirmed }) }).catch(() => null);
   if (!r) { toast.error("hubert server is not reachable"); return null; }
   const body = await r.text();
   if (!r.ok) { toast.error(body); return null; }
-  const result = (JSON.parse(body) as { result: string }).result;
-  if (speakReplies) speak(result);
-  return result;
+  return (JSON.parse(body) as { result: string }).result;
 }
 
 /** One-shot signals the panel raises so the shell can drive the mascot and settings. */
@@ -55,8 +53,8 @@ export function VoicePanel({ preferences, paused = false, onSignal, applyView, o
 }) {
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const nextId = useRef(0);
-  const deps = useRef({ onSignal, applyView, preferences });
-  deps.current = { onSignal, applyView, preferences };
+  const deps = useRef({ onSignal, applyView, preferences, quiet: false });
+  deps.current = { ...deps.current, onSignal, applyView, preferences };
 
   const handleSpeech = useCallback(async (text: string, connector: string, sttMs?: number) => {
     const id = ++nextId.current;
@@ -77,11 +75,17 @@ export function VoicePanel({ preferences, paused = false, onSignal, applyView, o
     const timing = [sttMs != null ? `stt ${Math.round(sttMs)} ms` : null, plan.ms != null ? `plan ${Math.round(plan.ms)} ms` : null].filter((s): s is string => !!s).join(" · ");
     toast.success(`“${text}”`, { description: timing ? `${timing} · ${plan.via}` : plan.via });
     if (plan.view) deps.current.applyView(plan.view);
-    if (deps.current.preferences.speakReplies && plan.say) speak(plan.say);
+    // Spoken replies stay silent while the mic is open, so a reply is never recorded back.
+    const prefs = deps.current.preferences;
+    const spoken = prefs.speakReplies && !deps.current.quiet;
+    // A plan with no actions is pure speech; otherwise the action result is what gets read.
+    if (spoken && plan.say && !plan.actions.length) speakReply(plan.say, "answer", prefs);
     let result: string | null = null;
+    let lastType: PlanAction["type"] | null = null;
     for (const a of plan.actions) {
-      if (!a.needsConfirm) { const res = await runAction(a, false, deps.current.preferences.speakReplies); if (res != null) result = res; }
+      if (!a.needsConfirm) { const res = await runAction(a, false); if (res != null) { result = res; lastType = a.type; } }
     }
+    if (spoken && result && lastType) speakReply(result, lastType === "status" ? "answer" : "ack", prefs);
     const pending = plan.actions.filter((a) => a.needsConfirm);
     if (!plan.actions.length && !plan.say) result = "No matching command";
     setExchanges((prev) => prev.map((x) => (x.id === id ? { ...x, via: plan.via, say: plan.say, dropped: plan.dropped, pending, result, status: "done" } : x)));
@@ -90,6 +94,8 @@ export function VoicePanel({ preferences, paused = false, onSignal, applyView, o
   const onError = useCallback((message: string) => { deps.current.onSignal({ kind: "error" }); toast.error(message); }, []);
 
   const voice = useVoice(handleSpeech, onError);
+  // While the mic is open, spoken output is suppressed so a reply is never recorded back into the next transcript.
+  deps.current.quiet = voice.state === "starting" || voice.state === "listening";
 
   useEffect(() => { onSignal({ kind: "recorder", state: voice.state }); }, [voice.state, onSignal]);
   useEffect(() => { onSignal({ kind: "connector", connector: voice.stt?.active ?? null }); }, [voice.stt, onSignal]);
@@ -114,7 +120,8 @@ export function VoicePanel({ preferences, paused = false, onSignal, applyView, o
   }, [paused, canRecord, preferences.shortcut, preferences.voiceMode, voiceState, start, stop, cancel]);
 
   const confirm = useCallback(async (id: number, action: PlanAction) => {
-    const res = await runAction(action, true, deps.current.preferences.speakReplies);
+    const res = await runAction(action, true);
+    if (res && deps.current.preferences.speakReplies && !deps.current.quiet) speakReply(res, action.type === "status" ? "answer" : "ack", deps.current.preferences);
     setExchanges((prev) => prev.map((x) => (x.id === id ? { ...x, pending: x.pending.filter((p) => p !== action), result: res ?? x.result } : x)));
   }, []);
   const dismiss = useCallback((id: number, action: PlanAction) => {
@@ -140,6 +147,7 @@ export function VoicePanel({ preferences, paused = false, onSignal, applyView, o
           <ShortcutHint preferences={preferences} onOpenSettings={onOpenSettings} />
         </div>
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-3">
+          {listening && voice.draft && <DraftCard text={voice.draft} />}
           {micOff ? (
             <NoConnector onOpenSettings={onOpenSettings} />
           ) : latest ? (
@@ -210,6 +218,17 @@ function ShortcutHint({ preferences, onOpenSettings }: { preferences: Preference
         </>
       )}
     </p>
+  );
+}
+
+function DraftCard({ text }: { text: string }) {
+  return (
+    <Card size="sm" className="min-w-0 border-dashed">
+      <CardContent className="flex min-w-0 flex-col gap-2">
+        <Badge variant="outline" className="self-start">draft</Badge>
+        <p className="text-lg leading-snug font-medium break-words text-muted-foreground">“{text}”</p>
+      </CardContent>
+    </Card>
   );
 }
 
