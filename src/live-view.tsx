@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 export { ChangeMap } from "./change-map";
 
-type Command = { agent: string; command: string; intent?: string; error?: string; ok: boolean; duration_ms?: number; ts: number };
+type Command = { agent: string; command: string; intent?: string; error?: string; ok?: boolean; duration_ms?: number; ts: number };
 type NormStat = { command: string; count: number; failed: number };
 type CommandStatsData = {
   total: number; failed: number;
@@ -43,14 +43,14 @@ export function CommandsView() {
     const timer = setInterval(refresh, 1500);
     return () => { active = false; clearInterval(timer); };
   }, []);
-  const visible = failedOnly ? commands.filter(c => !c.ok) : commands;
+  const visible = failedOnly ? commands.filter(c => c.ok === false) : commands;
   return <Card size="sm"><CardHeader><CardTitle>Commands run <span className="text-xs font-normal text-muted-foreground">recent completed calls</span></CardTitle></CardHeader>
     <CardContent>{error && <p role="alert" className="text-destructive">{error}</p>}
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Button size="sm" variant={tab === "live" ? "secondary" : "ghost"} aria-pressed={tab === "live"} onClick={() => setTab("live")}>Live</Button>
         <Button size="sm" variant={tab === "stats" ? "secondary" : "ghost"} aria-pressed={tab === "stats"} onClick={() => setTab("stats")}>Stats</Button>
         {tab === "live" && <>
-          <span>{commands.length} completed · {commands.filter(c => !c.ok).length} failed</span>
+          <span>{commands.length} completed · {commands.filter(c => c.ok === false).length} failed</span>
           <Button size="sm" variant={failedOnly ? "ghost" : "secondary"} aria-pressed={!failedOnly} onClick={() => setFailedOnly(false)}>All</Button>
           <Button size="sm" variant={failedOnly ? "secondary" : "ghost"} aria-pressed={failedOnly} onClick={() => setFailedOnly(true)}>Failed</Button>
         </>}
@@ -60,7 +60,7 @@ export function CommandsView() {
         ? (visible.length ? <ul className="divide-y">{visible.map((c, i) =>
           <li key={`${c.ts}-${i}`} className="min-w-0 py-2 text-xs">
             <details className="group min-w-0"><summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-              <Badge variant={c.ok ? "secondary" : "destructive"}>{c.ok ? "ok" : "failed"}</Badge>
+              <Badge variant={c.ok === false ? "destructive" : c.ok === true ? "secondary" : "outline"}>{c.ok === false ? "failed" : c.ok === true ? "ok" : "?"}</Badge>
               <span className="max-w-24 shrink-0 truncate text-muted-foreground" title={c.agent}>{c.agent}</span>
               <span className="min-w-0 flex-1 truncate" title={c.intent ?? c.command}>{c.intent || c.command.split("\n")[0]}</span>
               {c.duration_ms != null && <span className="shrink-0 tabular-nums text-muted-foreground">{c.duration_ms}ms</span>}

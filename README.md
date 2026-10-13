@@ -127,7 +127,7 @@ The server binds to loopback and rejects foreign `Host` and `Origin` headers. Lo
 
 - Edit counts come from recent journal tails and miss edits made through shell commands.
 - Focus works for jcode agents in titled tmux panes. Other agents are shown but cannot be focused, messaged or interrupted.
-- The command list reads only jcode and Claude Code journals. The change map also counts Codex patch edits. Omp, Pi, OpenCode and Cursor appear in the agent list and in changed files by working directory only.
+- The command list reads jcode, Claude Code and Codex journals. Codex records shell calls as JS cells, so their duration is shown but ok/failed only when the cell itself errored (the exec exit code is not in the transcript). Omp, Pi, OpenCode and Cursor appear in the agent list and in changed files by working directory only.
 - Voice has been tested with a local Whisper socket. Groq, OpenAI and Deepgram are covered by mock-server tests only.
 - Mic permission and the in-app shortcut were checked in the WebKitGTK window, but no end-to-end transcription (no speech connector is configured on the dev machine).
 - Global push to talk is wired end to end (CLI -> server -> SSE -> window) and unit tested, but the actual Hyprland keybind has not been tried on a real session.

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { recentCommands, fileDiff, editEvents } from "./live";
+import { recentCommands, fileDiff, editEvents, codexCommands } from "./live";
 
 const git = (root: string, ...args: string[]) => Bun.spawnSync(["git", "-C", root, ...args], { stderr: "pipe" });
 
@@ -77,7 +77,6 @@ import { codexEdits } from "./live";
 import { mkdirSync as mk, mkdtempSync as tmp, writeFileSync as wf } from "fs";
 import { tmpdir as td } from "os";
 import { join as j } from "path";
-
 test("codexEdits reports successful patch_apply_end inside a repo, ignores failures and outside paths", () => {
   const dir = tmp(j(td(), "cx-"));
   const day = j(dir, "2026", "10", "09"); mk(day, { recursive: true });
@@ -89,4 +88,40 @@ test("codexEdits reports successful patch_apply_end inside a repo, ignores failu
   const events = codexEdits([{ root: "/repo" }], dir);
   expect(events.map((e) => e.path)).toEqual(["src/a.ts"]);
   expect(events[0]!.agent.startsWith("cx-repo-")).toBe(true);
+});
+
+// Shapes below are copied from a real ~/.codex/sessions rollout (codex-cli 0.145.0):
+// exec is recorded as a JS cell, and its output is prefixed with a Script/Wall time header.
+test("codexCommands pairs exec cells with output, reads duration, and only fails on Script error", () => {
+  const dir = tmp(j(td(), "cx-cmd-"));
+  const day = j(dir, "2026", "07", "28"); mk(day, { recursive: true });
+  const exec = (callId: string, input: string, ts: string) => JSON.stringify({
+    timestamp: ts, type: "response_item",
+    payload: { type: "custom_tool_call", id: `ctc_${callId}`, status: "completed", call_id: callId, name: "exec", input },
+  });
+  const cell = (cmd: string) => `const r = await tools.exec_command(${JSON.stringify({ cmd, yield_time_ms: 10000, max_output_tokens: 20000 })});\ntext(r.output);\n`;
+  const out = (callId: string, header: string, body: string, ts: string) => JSON.stringify({
+    timestamp: ts, type: "response_item",
+    payload: { type: "custom_tool_call_output", call_id: callId, output: [{ type: "input_text", text: header }, { type: "input_text", text: body }] },
+  });
+  const header = (kind: string, seconds: string) => `Script ${kind}\nWall time ${seconds} seconds\nOutput:\n`;
+  wf(j(day, "rollout-2026-07-28T12-57-47-0123456789abcdef0123456789abcdef0123.jsonl"), [
+    JSON.stringify({ timestamp: "2026-07-28T19:57:00Z", type: "turn_context", payload: { cwd: "/repo", model: "gpt-5.6-terra" } }),
+    exec("call_1", cell("sed -n '1,240p' /repo/a.ts"), "2026-07-28T19:58:12Z"),
+    exec("call_patch", "const patch = \"*** Begin Patch\\n*** Update File: /repo/a.ts\\n*** End Patch\";\nconst r = await tools.apply_patch(patch);", "2026-07-28T19:58:20Z"),
+    out("call_1", header("completed", "10.2"), "---\nname: ponytail\n", "2026-07-28T19:58:22Z"),
+    exec("call_2", cell("false"), "2026-07-28T19:59:00Z"),
+    out("call_2", header("error:", "0.5"), "ReferenceError: boom\n", "2026-07-28T19:59:01Z"),
+    JSON.stringify({ timestamp: "2026-07-28T19:59:30Z", type: "response_item", payload: { type: "function_call", call_id: "call_wait", name: "wait", arguments: "{\"cell_id\":\"5\",\"yield_time_ms\":10000}" } }),
+    JSON.stringify({ timestamp: "2026-07-28T19:59:31Z", type: "response_item", payload: { type: "function_call_output", call_id: "call_wait", output: [{ type: "input_text", text: "Script completed\nWall time 0.0 seconds\nOutput:\n" }, { type: "input_text", text: "{}" }] } }),
+  ].join("\n"));
+  const commands = codexCommands(dir);
+  expect(commands.map((c) => c.command)).toEqual(["sed -n '1,240p' /repo/a.ts", "false"]);
+  expect(commands[0]).toMatchObject({ source: "codex", tool: "exec", duration_ms: 10200 });
+  expect(commands[0]!.ok).toBeUndefined(); // Script completed proves the cell finished, not exit 0.
+  expect(commands[0]!.agent.startsWith("cx-repo-")).toBe(true);
+  expect(commands[1]).toMatchObject({ ok: false, duration_ms: 500, error: "ReferenceError: boom\n" });
+  const empty = tmp(j(td(), "empty-")); mk(empty, { recursive: true });
+  const merged = recentCommands(j(empty, "jcode"), j(empty, "claude"), dir);
+  expect(merged.map((c) => c.command)).toEqual(["false", "sed -n '1,240p' /repo/a.ts"]);
 });
