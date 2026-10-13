@@ -1,6 +1,10 @@
 // Connector wire-format checks against a local mock. No network, no keys.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { CONNECTORS, activeConnector, sttStatus } from "./stt";
+import { mkdtempSync, rmSync } from "fs";
+import { createServer } from "net";
+import { tmpdir } from "os";
+import { join } from "path";
+import { CONNECTORS, activeConnector, sttStatus, transcribe } from "./stt";
 
 const WAV = new Uint8Array([82, 73, 70, 70, 1, 2, 3, 4]);
 const seen: { url: string; auth: string | null; ctype: string | null; model?: string | null; fileType?: string; bytes?: number }[] = [];
@@ -115,4 +119,39 @@ test("selection: HUBERT_STT wins, unknown id is null, no implicit API use", () =
   // keys are set (groq/deepgram) but they are api connectors, so nothing is chosen implicitly
   expect(activeConnector()).toBeNull();
   expect(sttStatus().active).toBeNull();
+});
+
+test("transcribe() reports which connector answered and how long it took", async () => {
+  process.env.HUBERT_STT = "openai-compatible";
+  process.env.HUBERT_STT_URL = `http://127.0.0.1:${server.port}/v1`;
+  process.env.HUBERT_STT_KEY = "sk-test";
+  const r = await transcribe(WAV, "audio/wav");
+  expect(r.connector).toBe("openai-compatible");
+  expect(r.text).toBe("hello from openai-compatible");
+  expect(typeof r.ms).toBe("number");
+  expect(r.ms).toBeGreaterThanOrEqual(0);
+});
+
+test("whisper-socket: retries once so a socket that comes back is picked up, and says so if it stays down", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "hubert-sock-"));
+  const sockPath = join(dir, "whisper.sock");
+  let connections = 0;
+  const sock = createServer((conn) => {
+    connections++;
+    conn.on("data", () => conn.end("hello from socket\n"));
+  });
+  // The socket file does not exist yet: attempt 1 fails, the 300 ms retry lands after the server is up.
+  setTimeout(() => sock.listen(sockPath), 100);
+  process.env.HUBERT_STT = "whisper-socket";
+  process.env.HUBERT_STT_SOCKET = sockPath;
+  const connector = CONNECTORS.find((c) => c.id === "whisper-socket")!;
+  try {
+    expect(await connector.transcribe(WAV)).toBe("hello from socket");
+    expect(connections).toBe(1);
+  } finally {
+    await new Promise<void>((resolve) => sock.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // Down for both attempts: the error names the socket instead of failing silently.
+  await expect(connector.transcribe(WAV)).rejects.toThrow(/socket/);
 });

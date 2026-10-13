@@ -195,9 +195,11 @@ export async function plan(utterance: string, agents: Pick<Agent, "name" | "stat
   if (!st.enabled) throw new Error(`brain unavailable: ${st.reason}`);
   const args = ["--quiet", "--no-update", "--no-selfdev", "--tool-profile", "none", "-m", st.model!, ...(env("HUBERT_BRAIN_PROVIDER") ? ["-p", env("HUBERT_BRAIN_PROVIDER")!] : []), "run", "--json", buildPrompt(utterance, agents, repos, windows)];
   const p = Bun.spawn(["jcode", ...args], { cwd: tmpdir(), stdout: "pipe", stderr: "pipe" });
-  const timer = setTimeout(() => p.kill(), 45_000);
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; p.kill(); }, 45_000);
   try {
     const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    if (timedOut) throw new Error("the model took longer than 45s to answer, try again");
     if (code !== 0) throw new Error(`jcode exited ${code}: ${(await new Response(p.stderr).text()).slice(0, 200)}`);
     const text = (JSON.parse(out) as { text?: string }).text ?? "";
     return { ...parsePlan(text, { agents: agents.map((a) => a.name), repos, windows }), model: st.model! };

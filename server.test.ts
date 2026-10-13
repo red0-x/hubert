@@ -52,7 +52,7 @@ test("/api/diff returns 400 for a traversal or an unlisted file, 400 when fileDi
 });
 
 test("/api/transcribe returns 415 for non-audio and 413 for empty or oversized audio", async () => {
-  const deps = makeDeps({ transcribe: (async () => ({ text: "hi" })) as unknown as Deps["transcribe"] });
+  const deps = makeDeps({ transcribe: (async () => ({ text: "hi", ms: 7 })) as unknown as Deps["transcribe"] });
   const url = BASE + "/api/transcribe";
   expect((await transcribeRoute(new Request(url, { method: "POST", headers: { host: HOST, "content-type": "text/plain" }, body: "nope" }), deps)).status).toBe(415);
   expect((await transcribeRoute(new Request(url, { method: "POST", headers: { host: HOST, "content-type": "audio/wav" } }), deps)).status).toBe(413);
@@ -60,7 +60,9 @@ test("/api/transcribe returns 415 for non-audio and 413 for empty or oversized a
   expect((await transcribeRoute(new Request(url, { method: "POST", headers: { host: HOST, "content-type": "audio/wav" }, body: oversized }), deps)).status).toBe(413);
   const ok = await transcribeRoute(new Request(url, { method: "POST", headers: { host: HOST, "content-type": "audio/wav" }, body: new Uint8Array([1, 2, 3]) }), deps);
   expect(ok.status).toBe(200);
-  expect(await ok.json()).toEqual({ text: "hi" });
+  const body = (await ok.json()) as { text: string; ms: number };
+  expect(body.text).toBe("hi");
+  expect(typeof body.ms).toBe("number");
 });
 
 test("/api/execute returns 409 for unconfirmed send/stop and 400 for unknown agents", async () => {

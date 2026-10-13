@@ -18,8 +18,9 @@ export type Connector = {
 };
 
 const env = (k: string) => process.env[k]?.trim() || undefined;
+const defaultSocketPath = () => env("HUBERT_DEFAULT_SOCKET") ?? join(homedir(), ".jcode", "dictation", "whisper.sock");
 /** HUBERT_STT_SOCKET, else the warm jcode dictation socket if it exists. */
-const whisperSocket = () => env("HUBERT_STT_SOCKET") ?? [env("HUBERT_DEFAULT_SOCKET") ?? join(homedir(), ".jcode", "dictation", "whisper.sock")].find(existsSync);
+const whisperSocket = () => env("HUBERT_STT_SOCKET") ?? [defaultSocketPath()].find(existsSync);
 const need = (...keys: string[]) => {
   const miss = keys.filter((k) => !env(k));
   return miss.length ? `set ${miss.join(", ")}` : null;
@@ -96,7 +97,29 @@ const command: Connector = {
   },
 };
 
-/** Unix-socket whisper server: write "<wav path>\n", read the transcript until close (the jcode dictation faster-whisper server speaks this). */
+/** Socket failures that a retry can fix (server restarting) versus ones that cannot. */
+function socketWhy(e: NodeJS.ErrnoException, path: string): string {
+  if (e.code === "ENOENT" || e.code === "ECONNREFUSED") return `no whisper socket listening at ${path} (start the dictation server, or point HUBERT_STT_SOCKET at it)`;
+  if (e.code === "EAGAIN") return `whisper socket at ${path} is busy, try again in a moment`;
+  if (e.code === "EPIPE" || e.code === "ECONNRESET") return `whisper socket at ${path} dropped the connection (server restarting?)`;
+  return `whisper socket error at ${path}: ${e.message}`;
+}
+
+/** One request/response over the socket: write "F:<wav path>\n", read the transcript until close. */
+function socketOnce(path: string, wavPath: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const s = connect(path);
+    const timer = setTimeout(() => { s.destroy(); reject(new Error(`no reply from the whisper socket within 60s (${path})`)); }, 60_000);
+    const settle = (fn: () => void) => { clearTimeout(timer); fn(); };
+    s.on("connect", () => s.write(`F:${wavPath}\n`));
+    s.on("data", (d) => chunks.push(Buffer.from(d)));
+    s.on("error", (e) => settle(() => reject(new Error(socketWhy(e as NodeJS.ErrnoException, path)))));
+    s.on("close", () => settle(() => resolve(Buffer.concat(chunks).toString("utf8").trim())));
+  });
+}
+
+/** Unix-socket whisper server (the jcode dictation faster-whisper server speaks this). One retry: a restart usually reconnects. */
 const socket: Connector = {
   id: "whisper-socket",
   label: "faster-whisper socket",
@@ -107,15 +130,19 @@ const socket: Connector = {
     try {
       const path = join(dir, "audio.wav");
       writeFileSync(path, wav);
-      return await new Promise<string>((resolve, reject) => {
-        const chunks: Buffer[] = [];
-        const s = connect(whisperSocket()!);
-        const timer = setTimeout(() => (s.destroy(), reject(new Error("socket timeout"))), 60_000);
-        s.on("connect", () => s.write(`F:${path}\n`));
-        s.on("data", (d) => chunks.push(Buffer.from(d)));
-        s.on("error", (e) => (clearTimeout(timer), reject(e)));
-        s.on("close", () => (clearTimeout(timer), resolve(Buffer.concat(chunks).toString("utf8").trim())));
-      });
+      const attempts = 2;
+      let last: Error = new Error("whisper socket unavailable");
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        // Talk to the configured path even if the socket is not up yet, so a server that comes back is picked up.
+        const sock = env("HUBERT_STT_SOCKET") ?? defaultSocketPath();
+        try {
+          return await socketOnce(sock, path);
+        } catch (e) {
+          last = e as Error;
+          if (attempt < attempts) await Bun.sleep(300);
+        }
+      }
+      throw last;
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -141,12 +168,22 @@ export async function toWav(audio: Bytes, mime: string): Promise<Bytes> {
   return new Uint8Array(out);
 }
 
-export async function transcribe(audio: Bytes, mime: string): Promise<{ text: string; connector: string }> {
+export type Transcript = { text: string; connector: string; ms: number };
+
+export async function transcribe(audio: Bytes, mime: string): Promise<Transcript> {
   const c = activeConnector();
   if (!c) throw new Error("no speech-to-text connector configured, see README (HUBERT_STT)");
   const why = c.unavailable();
   if (why) throw new Error(`${c.id} not usable: ${why}`);
-  return { text: await c.transcribe(await toWav(audio, mime)), connector: c.id };
+  const started = Date.now();
+  try {
+    return { text: await c.transcribe(await toWav(audio, mime)), connector: c.id, ms: Date.now() - started };
+  } catch (e) {
+    const err = e as Error;
+    // AbortSignal.timeout surfaces as a bare DOMException; say what actually happened.
+    if (err.name === "TimeoutError") throw new Error(`${c.id} did not answer within 30s (check the server or network)`);
+    throw err;
+  }
 }
 
 export function sttStatus() {

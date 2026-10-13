@@ -36,7 +36,7 @@ export type VoiceSignal =
   | { kind: "done"; at: number }
   | { kind: "error" };
 
-type Plan = { say: string; actions: PlanAction[]; dropped: string[]; via: string; view?: ViewDirective };
+type Plan = { say: string; actions: PlanAction[]; dropped: string[]; via: string; view?: ViewDirective; ms?: number };
 type Exchange = {
   id: number; text: string; connector: string; via: string; say: string;
   dropped: string[]; pending: PlanAction[]; result: string | null;
@@ -58,7 +58,7 @@ export function VoicePanel({ preferences, paused = false, onSignal, applyView, o
   const deps = useRef({ onSignal, applyView, preferences });
   deps.current = { onSignal, applyView, preferences };
 
-  const handleSpeech = useCallback(async (text: string, connector: string) => {
+  const handleSpeech = useCallback(async (text: string, connector: string, sttMs?: number) => {
     const id = ++nextId.current;
     const base: Exchange = { id, text, connector, via: "", say: "", dropped: [], pending: [], result: null, status: "thinking", error: null, at: Date.now() };
     setExchanges((prev) => [base, ...prev].slice(0, MAX_EXCHANGES));
@@ -67,11 +67,15 @@ export function VoicePanel({ preferences, paused = false, onSignal, applyView, o
     if (!r?.ok) {
       const msg = r ? await r.text() : "hubert server is not reachable";
       deps.current.onSignal({ kind: "error" });
+      toast.error(`Could not plan “${text}”`, { description: msg });
       setExchanges((prev) => prev.map((x) => (x.id === id ? { ...x, status: "error", error: msg } : x)));
       return;
     }
     const plan = (await r.json()) as Plan;
     deps.current.onSignal({ kind: "done", at: Date.now() });
+    // Latency of each hop, so a slow mic, whisper or model is obvious at a glance.
+    const timing = [sttMs != null ? `stt ${Math.round(sttMs)} ms` : null, plan.ms != null ? `plan ${Math.round(plan.ms)} ms` : null].filter((s): s is string => !!s).join(" · ");
+    toast.success(`“${text}”`, { description: timing ? `${timing} · ${plan.via}` : plan.via });
     if (plan.view) deps.current.applyView(plan.view);
     if (deps.current.preferences.speakReplies && plan.say) speak(plan.say);
     let result: string | null = null;

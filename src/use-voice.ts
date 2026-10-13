@@ -4,19 +4,27 @@ import { createVoiceRecorder, type VoiceState } from "./recording";
 export type { VoiceState } from "./recording";
 type Stt = { active: string | null; connectors: { id: string; label: string; kind: string; unavailable: string | null }[] };
 
-export function useVoice(onText: (text: string, connector: string) => void, onError: (msg: string) => void) {
+export function useVoice(onText: (text: string, connector: string, ms?: number) => void, onError: (msg: string) => void) {
   const [state, setState] = useState<VoiceState>("idle");
   const [level, setLevel] = useState(0);
   const [stt, setStt] = useState<Stt | null>(null);
   const recorder = useRef<ReturnType<typeof createVoiceRecorder> | null>(null);
   const pttActive = useRef(false);
+  const sttRef = useRef<Stt | null>(null);
   const callbacks = useRef({ onText, onError });
   callbacks.current = { onText, onError };
 
   useEffect(() => {
     let active = true;
-    recorder.current = createVoiceRecorder(setState, (text, connector) => callbacks.current.onText(text, connector), message => callbacks.current.onError(message), setLevel);
-    fetch("/api/stt").then(r => r.json() as Promise<Stt>).then(data => { if (active) setStt(data); }).catch(() => {});
+    recorder.current = createVoiceRecorder(
+      setState,
+      (text, connector, ms) => callbacks.current.onText(text, connector, ms),
+      message => callbacks.current.onError(message),
+      setLevel,
+      // Refuse to open the mic when nothing can transcribe it, instead of recording into the void.
+      () => (sttRef.current?.active ? null : "No speech connector configured. Set HUBERT_STT (see README) and restart Hubert."),
+    );
+    fetch("/api/stt").then(r => r.json() as Promise<Stt>).then(data => { sttRef.current = data; if (active) setStt(data); }).catch(() => {});
     // Global hotkey: the server owns start/stop so it works while the window is not focused.
     const events = new EventSource("/api/ptt/events");
     events.onmessage = (event) => {
