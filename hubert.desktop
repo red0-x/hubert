@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Hubert
+GenericName=Agent Dashboard
+Comment=Live dashboard and voice control for coding agents
+Exec="@HUBERT_DIR@/hubert.sh"
+Icon=hubert
+Terminal=false
+Categories=Development;
+Keywords=agents;jcode;claude;codex;dashboard;voice;
+StartupNotify=true
+StartupWMClass=dev.hubert.Hubert

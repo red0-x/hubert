@@ -9,10 +9,10 @@ bun install
 bun dev          # server with hot reload on 127.0.0.1:7777
 python3 hubert-window.py   # native window pointing at it
 bun test         # unit tests
-bunx tsc --noEmit
+bun run typecheck
 ```
 
-Run both checks before opening a PR. CI is not set up yet, so please paste the results in the PR.
+Run both checks before opening a PR. CI (`.github/workflows/ci.yml`) runs them too.
 
 ## Layout
 

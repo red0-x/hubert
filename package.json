@@ -27,10 +27,11 @@
   "scripts": {
     "dev": "bun --hot server.ts",
     "start": "NODE_ENV=production bun server.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "license": "MIT",
-  "description": "Live dashboard and voice control for coding agents (jcode, Claude Code)",
+  "description": "Native desktop dashboard and voice control for coding agents (jcode, Claude Code, Codex, Cursor, oh-my-pi, Pi, OpenCode)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/red0-x/hubert.git"
