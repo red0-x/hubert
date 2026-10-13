@@ -45,8 +45,8 @@ export async function speakTts(text: string, pitch: number, rate: number, sink: 
   if (piperReady()) {
     // Neural voice. Raw s16 mono piped to paplay; playing slightly faster than the model rate lifts pitch for a brighter, younger sound.
     const sr = (JSON.parse(readFileSync(`${voiceFile()}.json`, "utf8")).audio?.sample_rate as number) || 22050;
-    const lift = 1 + (clamp(pitch, 0.5, 2) - 1) * 0.3;
-    const piper = Bun.spawn([PIPER, "-m", voiceFile(), "--output-raw", "--length-scale", String(1 / clamp(rate, 0.5, 2) / lift)], { stdin: new Blob([text.replace(/\s+/g, " ")]), stdout: "pipe", stderr: "ignore" });
+    const lift = 1 + (clamp(pitch, 0.5, 2) - 1) * 0.5; // playback-rate pitch shift, 1.25x at the default 1.5
+    const piper = Bun.spawn([PIPER, "-m", voiceFile(), "--output-raw", "--length-scale", String(lift / clamp(rate, 0.5, 2))], { stdin: new Blob([text.replace(/\s+/g, " ")]), stdout: "pipe", stderr: "ignore" });
     const play = Bun.spawn(["paplay", "--raw", "--format=s16le", "--channels=1", `--rate=${Math.round(sr * lift)}`, ...device], { stdin: piper.stdout, stdout: "ignore", stderr: "ignore" });
     current = [piper, play];
     return true;
