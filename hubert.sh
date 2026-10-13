@@ -54,8 +54,11 @@ if command -v hyprctl >/dev/null && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; t
   [ -n "$addr" ] && { hyprctl dispatch focuswindow "address:$addr" >/dev/null; exit 0; }
 fi
 # Window first: it shows a splash and connects once the server answers, so Python/GTK
-# startup overlaps server startup instead of waiting for it.
-HUBERT_PORT="$PORT" nohup python3 hubert-window.py >/dev/null 2>&1 &
+# startup overlaps server startup instead of waiting for it. Its output goes to a log of its
+# own: a WebKit load or permission failure is invisible otherwise.
+WINLOG="${XDG_STATE_HOME:-$HOME/.local/state}/hubert-window.log"
+mkdir -p "$(dirname "$WINLOG")"
+HUBERT_PORT="$PORT" nohup python3 hubert-window.py >"$WINLOG" 2>&1 &
 
 if [ "$started" = 1 ]; then
   for _ in $(seq 50); do up && break; sleep 0.1; done
