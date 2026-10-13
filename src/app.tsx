@@ -4,6 +4,7 @@ import { BotIcon, GitBranchIcon, GitCompareIcon, MicIcon, SettingsIcon, Terminal
 import { toast } from "sonner";
 import type { Agent, Repo } from "../state";
 import { useVoice } from "./use-voice";
+import type { ViewDirective } from "../voice/intent";
 import { speak } from "./speech";
 import { Mascot, mascotState } from "./mascot";
 import { SettingsWindow, usePreferences } from "./settings";
@@ -39,16 +40,17 @@ async function runAction(a: PlanAction, confirmed: boolean, speakReplies = false
 }
 
 /** Transcript -> plan (grammar first, light model otherwise). Mutations wait for a click. */
-async function handleSpeech(text: string, connector: string, on?: (event: "start" | "done" | "error") => void, speakReplies = false) {
+async function handleSpeech(text: string, connector: string, on?: (event: "start" | "done" | "error") => void, speakReplies = false, onView?: (v: ViewDirective) => void) {
   const id = toast.loading(`“${text}”`, { description: "Thinking…" });
   on?.("start");
   const r = await fetch("/api/voice", { method: "POST", body: JSON.stringify({ text }) }).catch(() => null);
   if (!r?.ok) { on?.("error"); return toast.error(r ? await r.text() : "hubert server is not reachable", { id }); }
-  const plan = (await r.json()) as { say: string; actions: PlanAction[]; dropped: string[]; via: string };
+  const plan = (await r.json()) as { say: string; actions: PlanAction[]; dropped: string[]; via: string; view?: ViewDirective };
   toast.dismiss(id);
   on?.("done");
   const desc = `${plan.via === "grammar" ? "" : `${plan.via} \u00b7 `}${connector}`;
   if (speakReplies && plan.say) speak(plan.say);
+  if (plan.view) onView?.(plan.view); // view switches are applied in the window, never sent to the server
   if (!plan.actions.length) return toast(plan.say || "No matching command", { description: `“${text}” \u00b7 ${desc}` });
   for (const a of plan.actions) {
     if (!a.needsConfirm) await runAction(a, false, speakReplies);
@@ -164,18 +166,29 @@ function App() {
   const [showClosed, setShowClosed] = useState(false);
   const [view, setView] = useState<"agents" | "map" | "commands" | "diff">(() => (["agents", "map", "commands", "diff"] as const).find(v => v === location.hash.slice(1)) ?? "agents");
   const [selectedFile, setSelectedFile] = useState<{ root: string; path: string } | null>(null);
+  const [showFailures, setShowFailures] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [prefs, setPrefs] = usePreferences();
   // Signals that drive the mascot's pose.
   const [thinking, setThinking] = useState(false);
   const [answeredAt, setAnsweredAt] = useState(0);
   const [voiceError, setVoiceError] = useState(false);
+  // Voice view switches run here in the window: no server action, no confirmation.
+  const applyView = useCallback((v: ViewDirective) => {
+    if (v.failuresOnly !== undefined) setShowFailures(v.failuresOnly);
+    if (v.repo) {
+      const r = s?.repos.find((x) => x.name === v.repo);
+      const f = r?.files[0];
+      setSelectedFile(r && f ? { root: r.root, path: f.path } : null);
+      setView(v.panel ?? (r && f ? "diff" : "map"));
+    } else if (v.panel) setView(v.panel);
+  }, [s]);
   const voice = useVoice(
     useCallback((text: string, connector: string) => void handleSpeech(text, connector, (event) => {
       if (event === "start") { setVoiceError(false); setThinking(true); }
       else if (event === "done") { setThinking(false); setAnsweredAt(Date.now()); }
       else { setThinking(false); setVoiceError(true); }
-    }, prefs.speakReplies), [prefs.speakReplies]),
+    }, prefs.speakReplies, applyView), [prefs.speakReplies, applyView]),
     useCallback((msg: string) => { setVoiceError(true); toast.error(msg); }, []),
   );
 
@@ -272,7 +285,7 @@ function App() {
       </nav>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-4 p-4">
-          {view === "commands" && <CommandsView />}
+          {view === "commands" && <CommandsView onlyFailed={showFailures} />}
           {view === "map" && <ChangeMap repos={s.repos} onSelect={(file) => { setSelectedFile(file); setView("diff"); }} />}
           {view === "diff" && <DiffView repos={s.repos} selected={selectedFile} onSelect={setSelectedFile} />}
           {view === "agents" && <>

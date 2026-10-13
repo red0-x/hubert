@@ -67,6 +67,8 @@ export function normalizeCommand(raw: string): string {
   const segments = line.split(/&&|\|\||;/).map((part) => part.trim()).filter(Boolean);
   let picked = segments[0] ?? line;
   for (const segment of segments) if (KNOWN.has(commandName(segment))) { picked = segment; break; }
+  // `cd <dir> && real-command` is extremely common; do not let the wrapper hide the real command.
+  if (commandName(picked) === "cd" && segments.length > 1) picked = segments[segments.length - 1]!;
   const tokens = picked.split(/\s+/).filter(Boolean);
   if (!tokens.length) return "";
   const name = commandName(picked);

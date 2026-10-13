@@ -3,7 +3,7 @@
 import { tmpdir } from "os";
 import { basename } from "path";
 import { BRAIN_MARK, type Agent } from "../state";
-import { fuzzy, type Intent } from "./intent";
+import { describe, fuzzy, type Intent, type ViewDirective } from "./intent";
 import { windowCommand, type Window } from "./actions";
 
 export type Action =
@@ -116,6 +116,78 @@ export async function brainStatus(): Promise<{ enabled: boolean; model: string |
   if (!Bun.which("jcode")) return { enabled: false, model: null, reason: "jcode not found on PATH" };
   const model = await brainModel();
   return model ? { enabled: true, model, reason: null } : { enabled: false, model: null, reason: "no light model found, set HUBERT_BRAIN_MODEL" };
+}
+
+const and = (names: string[]): string =>
+  names.length === 1 ? names[0]! : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+/** Spoken-style one-sentence reply for a status question. Short enough to read aloud. */
+export function spokenStatus(a: { name: string; state: string; repo?: string | null; doing?: string }): string {
+  const where = a.repo ? ` in ${basename(a.repo)}` : "";
+  const doing = a.doing ? `, last ${a.doing.split(":")[0]}` : "";
+  return `${a.name} is ${a.state}${where}${doing}.`;
+}
+
+/** "which agents are working / idle" answer. */
+export function spokenRoster(agents: { name: string; state: string }[], want: "working" | "idle"): string {
+  const list = agents.filter((a) => a.state === want);
+  if (!list.length) return want === "working" ? "No agents are working." : "No agents are idle.";
+  const names = list.map((a) => a.name);
+  return `${list.length} agent${list.length === 1 ? " is" : "s are"} ${want}: ${and(names)}.`;
+}
+
+/** "what changed in <repo>" answer, spoken as plus/minus rather than "+42 -0". */
+export function spokenChanges(name: string, files: { path: string; add: number; del: number }[]): string {
+  if (!files.length) return `${name} has no changes.`;
+  const add = files.reduce((n, f) => n + f.add, 0);
+  const del = files.reduce((n, f) => n + f.del, 0);
+  const top = [...files].sort((a, b) => b.add + b.del - (a.add + a.del))[0]!;
+  return `${name} has ${files.length} changed file${files.length === 1 ? "" : "s"}, plus ${add} minus ${del}. Biggest: ${top.path}.`;
+}
+
+/** "show failing commands" answer over the recent completed-command sample. */
+export function spokenFailures(cmds: { agent: string; command: string; ok?: boolean }[]): string {
+  const failed = cmds.filter((c) => c.ok === false);
+  if (!failed.length) return "No failing commands in the recent sample.";
+  const c = failed[0]!;
+  return `${failed.length} of the last ${cmds.length} commands failed. Most recent: ${c.agent} ran ${c.command.split("\n")[0]!.slice(0, 60)}.`;
+}
+
+/**
+ * Everything the no-model grammar can answer or do without a mutation: read-only questions become a spoken
+ * reply, view switches become a client-side directive. Returns null when the intent needs an action or the brain.
+ */
+export function answer(
+  intent: Intent,
+  state: { agents: Pick<Agent, "name" | "state" | "repo" | "doing">[]; repos: { name: string; files: { path: string; add: number; del: number }[] }[] },
+  commands: { agent: string; command: string; ok?: boolean }[],
+): { say: string; view?: ViewDirective } | null {
+  switch (intent.type) {
+    case "status": {
+      const a = state.agents.find((x) => x.name === intent.agent);
+      return { say: a ? spokenStatus(a) : `I don't see an agent called ${intent.agent}.` };
+    }
+    case "roster":
+      return { say: spokenRoster(state.agents, intent.state) };
+    case "changed": {
+      if (intent.repo) {
+        const r = state.repos.find((x) => x.name === intent.repo);
+        return { say: r ? spokenChanges(r.name, r.files) : `I don't see a repo called ${intent.repo}.` };
+      }
+      const changed = state.repos.filter((r) => r.files.length);
+      return { say: changed.length ? changed.map((r) => spokenChanges(r.name, r.files)).join(" ") : "Nothing has changed in any repo." };
+    }
+    case "failures":
+      return { say: spokenFailures(commands), view: { panel: "commands", failuresOnly: true } };
+    case "view":
+      return { say: describe(intent), view: { panel: intent.panel, repo: intent.repo } };
+    case "diff": {
+      const repo = intent.target && state.repos.some((r) => r.name === intent.target) ? intent.target : undefined;
+      return { say: `Showing the diff${intent.target ? ` for ${intent.target}` : ""}`, view: { panel: "diff", repo } };
+    }
+    default:
+      return null;
+  }
 }
 
 export async function plan(utterance: string, agents: Pick<Agent, "name" | "state" | "repo" | "doing">[], repos: string[], windows: Window[] = []): Promise<Plan & { model: string }> {

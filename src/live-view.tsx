@@ -21,12 +21,14 @@ type CommandStatsData = {
 type EditEvent = { agent: string; root: string; path: string; ts: number };
 type Selection = { root: string; path: string } | null;
 
-export function CommandsView() {
+export function CommandsView({ onlyFailed }: { onlyFailed?: boolean } = {}) {
   const [commands, setCommands] = useState<Command[]>([]);
   const [stats, setStats] = useState<CommandStatsData | null>(null);
   const [error, setError] = useState("");
-  const [failedOnly, setFailedOnly] = useState(false);
+  const [failedOnly, setFailedOnly] = useState(!!onlyFailed);
   const [tab, setTab] = useState<"live" | "stats">("live");
+  // Voice ("show failing commands") opens this panel already filtered; the tabs still work normally.
+  useEffect(() => { if (onlyFailed !== undefined) setFailedOnly(onlyFailed); }, [onlyFailed]);
   useEffect(() => {
     let active = true;
     const refresh = () => {

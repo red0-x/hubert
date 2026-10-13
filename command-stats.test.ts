@@ -18,6 +18,7 @@ test("normalizeCommand handles package managers, paths, wrappers and edge cases"
   expect(normalizeCommand("rm -rf node_modules")).toBe("rm node_modules");
   expect(normalizeCommand("mkdir -p src/foo/bar")).toBe("mkdir <path>");
   expect(normalizeCommand("cd /repo && bun test")).toBe("bun test");
+  expect(normalizeCommand("cd /repo && echo done")).toBe("echo done");
   expect(normalizeCommand("echo hello world")).toBe("echo hello world");
   expect(normalizeCommand("   \n  git status  \n")).toBe("git status");
   expect(normalizeCommand("")).toBe("");
