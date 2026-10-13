@@ -5,6 +5,11 @@ set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 # Launchers (rofi, .desktop) start with a minimal PATH.
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+# Health check for first-run setup: prints the same report as GET /api/doctor.
+if [ "${1:-}" = "doctor" ]; then
+  command -v bun >/dev/null || { echo "hubert: bun is required for doctor (https://bun.sh)" >&2; exit 1; }
+  exec bun doctor.ts
+fi
 # Without a terminal, surface errors as a notification and in the log.
 if [ ! -t 2 ] && [ "${1:-}" != "ptt" ]; then
   ERRLOG="${XDG_STATE_HOME:-$HOME/.local/state}/hubert-launch.log"
@@ -25,14 +30,14 @@ if [ "${1:-}" = "ptt" ]; then
   exit 0
 fi
 
+started=0
 if ! up; then
   command -v bun >/dev/null || { echo "hubert: bun is required (https://bun.sh)" >&2; exit 1; }
   [ -d node_modules ] || bun install --frozen-lockfile
   LOG="${XDG_STATE_HOME:-$HOME/.local/state}/hubert.log"
   mkdir -p "$(dirname "$LOG")"
   NODE_ENV=production nohup bun server.ts >"$LOG" 2>&1 &
-  for _ in $(seq 50); do up && break; sleep 0.1; done
-  up || { echo "hubert: server failed to start, see $LOG" >&2; exit 1; }
+  started=1
 fi
 
 # jcode harness bridge (lets Hubert interrupt jcode agents). Optional, skipped if jcode is missing.
@@ -48,4 +53,11 @@ if command -v hyprctl >/dev/null && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; t
   addr=$(hyprctl clients -j | jq -r '.[] | select(.class=="dev.hubert.Hubert") | .address' | head -1)
   [ -n "$addr" ] && { hyprctl dispatch focuswindow "address:$addr" >/dev/null; exit 0; }
 fi
+# Window first: it shows a splash and connects once the server answers, so Python/GTK
+# startup overlaps server startup instead of waiting for it.
 HUBERT_PORT="$PORT" nohup python3 hubert-window.py >/dev/null 2>&1 &
+
+if [ "$started" = 1 ]; then
+  for _ in $(seq 50); do up && break; sleep 0.1; done
+  up || { echo "hubert: server failed to start, see $LOG" >&2; exit 1; }
+fi

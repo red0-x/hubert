@@ -7,6 +7,7 @@ import { NEEDS_CONFIRM, execute, listWindows } from "./voice/actions";
 import { describe, parseIntent } from "./voice/intent";
 import { isPttAction, resolvePtt, type PttState } from "./voice/ptt";
 import { ensureClientBundle, type Client } from "./client-build";
+import { buildReport, realEnv } from "./doctor";
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
@@ -168,6 +169,8 @@ export const routes: RouteTable = {
     "/api/edits": async (req) => guard(req) ?? Response.json(editEvents((await collect()).repos)),
     "/api/diff": (req) => diffRoute(req),
     "/api/stt": (req) => guard(req) ?? Response.json(sttStatus()),
+    // First-run health check: which tools/connectors/dirs are present and what to do about gaps.
+    "/api/doctor": (req) => guard(req) ?? Response.json(buildReport(realEnv(PORT))),
     // Global hotkey entry point. The CLI POSTs start/stop/toggle and every open window reacts over SSE.
     "/api/ptt": {
       POST: async (req) => {
@@ -201,20 +204,22 @@ export const routes: RouteTable = {
         if (denied) return denied;
         const { text } = (await req.json().catch(() => ({}))) as { text?: string };
         if (!text?.trim() || text.length > 2000) return new Response("text required (max 2000 chars)", { status: 400 });
+        const started = Date.now();
+        const ms = () => Date.now() - started;
         const s = await collect();
         const live = s.agents.filter((a) => a.state === "working" || a.state === "idle");
         const known = { agents: live.map((a) => a.name), repos: s.repos.map((r) => r.name) };
         const intent = parseIntent(text, known);
         // Read-only questions become a spoken reply and view switches become a client-side directive. No model, no mutation.
         const ans = answer(intent, { agents: live, repos: s.repos.map((r) => ({ name: r.name, files: r.files })) }, recentCommands());
-        if (ans) return Response.json({ say: ans.say, actions: [], dropped: [], view: ans.view, via: "grammar" });
+        if (ans) return Response.json({ say: ans.say, actions: [], dropped: [], view: ans.view, via: "grammar", ms: ms() });
         const act = intentToAction(intent);
         const windows = listWindows();
         const withFlags = (actions: Action[]) => actions.map((a) => ({ ...a, needsConfirm: NEEDS_CONFIRM.has(a.type), ...("address" in a ? { targetTitle: windows.find(w => w.address === a.address)?.title ?? "Window unavailable" } : {}) }));
-        if (act) return Response.json({ say: describe(intent), actions: withFlags([act]), dropped: [], via: "grammar" });
+        if (act) return Response.json({ say: describe(intent), actions: withFlags([act]), dropped: [], via: "grammar", ms: ms() });
         try {
           const p = await plan(text, live, known.repos, windows);
-          return Response.json({ say: p.say, actions: withFlags(p.actions), dropped: p.dropped, via: p.model });
+          return Response.json({ say: p.say, actions: withFlags(p.actions), dropped: p.dropped, via: p.model, ms: ms() });
         } catch (e) {
           return new Response((e as Error).message, { status: 502 });
         }
