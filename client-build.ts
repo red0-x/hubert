@@ -72,6 +72,9 @@ async function build(root: string, dir: string): Promise<boolean> {
     outdir: dir,
     target: "browser",
     minify: true,
+    // Without this everything lands in one chunk and the lazily imported panels are
+    // downloaded up front anyway.
+    splitting: true,
     plugins: [tailwind],
   });
   if (!out.success) {

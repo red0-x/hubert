@@ -59,13 +59,13 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  --muted-foreground: oklch(0.52 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: oklch(0.55 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -78,7 +78,7 @@
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: oklch(0.55 0 0);
 }
 
 .dark {
@@ -122,6 +122,24 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* A visible focus ring for every focusable element; component "outline-none"
+     rules still win where they draw their own ring. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Respect the OS reduce-motion setting everywhere: no keyframes, no transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Optional sprite character. Rendered only when /mascot/<state>.png exists. Static, no border or box. */
@@ -131,4 +149,16 @@
   object-fit: contain;
   pointer-events: none;
   user-select: none;
+}
+
+/* A working agent's dot pulses a few times, not forever: an infinite animation keeps
+   WebKitGTK's compositor busy every frame, which is this dashboard's biggest idle cost.
+   The global reduced-motion block above already turns this off for those users. */
+@keyframes hubert-working {
+  50% {
+    opacity: 0.45;
+  }
+}
+.hubert-working {
+  animation: hubert-working 2s ease-in-out 6;
 }
