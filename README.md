@@ -71,7 +71,7 @@ Hold the mic button (or your shortcut) and speak. Simple requests such as focusi
 - Focus and status run immediately. Sending a message, interrupting an agent, and moving or resizing a window need a click on **Do it**.
 - Hubert does **not** open or close windows or agents by voice. Hyprland arrangement is limited to validated move and resize.
 - While you hold the mic, a provisional draft of your words appears (local connectors only, never billed cloud STT). It is display-only. The final transcript on release is the only thing that acts.
-- Spoken replies: WebKitGTK has no speech synthesis, so Hubert speaks through local `espeak-ng` + `paplay` (a bright female voice, pitch default 1.5). Settings lists your PipeWire speakers and microphones: the speaker is used per reply, the microphone sets the system default input (`pactl`). Without espeak-ng it falls back to the browser's voices if present.
+- Spoken replies: WebKitGTK has no speech synthesis, so Hubert speaks through the local server. Run `./tts-setup.sh` once for the Piper neural voice (default `en_GB-jenny_dioco-medium`, bright and young; override with `HUBERT_TTS_VOICE`). Without it, Hubert falls back to the robotic `espeak-ng`. Pitch (default 1.5) lifts the voice. Settings lists your PipeWire speakers and microphones: the speaker is used per reply, the microphone sets the system default input (`pactl`).
 - Choose a speech-to-text connector with `HUBERT_STT`:
 
 | Variable | Purpose |
