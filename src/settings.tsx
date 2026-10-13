@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { DEFAULT_PREFERENCES, parsePreferences, PREFERENCES_KEY, shortcutLabel, validShortcut, type Preferences } from "./preferences";
-import { speechSupported } from "./speech";
+import { DEFAULT_PREFERENCES, SPEAK_PITCH_MAX, SPEAK_PITCH_MIN, SPEAK_RATE_MAX, SPEAK_RATE_MIN, parsePreferences, PREFERENCES_KEY, shortcutLabel, validShortcut, type Preferences } from "./preferences";
+import { listVoices, speechDiagnostic, type SpeechGlobal, type SpeechVoice } from "./speech";
 import { notificationsSupported } from "./alerts";
 
 // Mirrors DoctorReport from ../doctor.ts. Duplicated rather than imported so the client
@@ -50,11 +50,51 @@ export function usePreferences() {
   return [preferences, setPreferences] as const;
 }
 
+/** One bounded slider with a live value readout. */
+function RangeControl({ label, value, min, max, onChange }: {
+  label: string; value: number; min: number; max: number; onChange: (v: number) => void;
+}) {
+  return <div className="space-y-1">
+    <div className="flex items-center justify-between">
+      <label className="text-sm font-medium">{label}</label>
+      <span className="text-xs text-muted-foreground tabular-nums">{value.toFixed(2)}</span>
+    </div>
+    <input type="range" min={min} max={max} step={0.05} value={value} aria-label={`${label} ${value.toFixed(2)}`}
+      onChange={event => onChange(Number(event.target.value))} className="w-full accent-current" />
+  </div>;
+}
+
+/** Voice picker plus pitch/rate. Lists the voices the engine actually reports, by name and lang. */
+function VoiceTuning({ preferences, onChange }: { preferences: Preferences; onChange: (p: Preferences) => void }) {
+  const [voices, setVoices] = useState<SpeechVoice[]>(() => listVoices());
+  useEffect(() => {
+    const refresh = () => setVoices(listVoices());
+    refresh();
+    const synth = (typeof window === "undefined" ? undefined : (window as unknown as SpeechGlobal).speechSynthesis);
+    synth?.addEventListener?.("voiceschanged", refresh);
+    return () => synth?.removeEventListener?.("voiceschanged", refresh);
+  }, []);
+  return <div className="space-y-3">
+    <div className="space-y-1">
+      <label htmlFor="speak-voice" className="text-sm font-medium">Voice</label>
+      <select id="speak-voice" value={preferences.speakVoice ?? ""} onChange={event => onChange({ ...preferences, speakVoice: event.target.value || null })}
+        className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <option value="">System default</option>
+        {voices.map(v => <option key={v.voiceURI ?? v.name} value={v.voiceURI ?? v.name}>{v.name} · {v.lang}</option>)}
+      </select>
+      <p className="text-xs text-muted-foreground">{voices.length ? `${voices.length} installed ${voices.length === 1 ? "voice" : "voices"} reported by this engine.` : "No installed voices reported yet; the engine will use its default."}</p>
+    </div>
+    <RangeControl label="Pitch" value={preferences.speakPitch} min={SPEAK_PITCH_MIN} max={SPEAK_PITCH_MAX} onChange={v => onChange({ ...preferences, speakPitch: v })} />
+    <RangeControl label="Rate" value={preferences.speakRate} min={SPEAK_RATE_MIN} max={SPEAK_RATE_MAX} onChange={v => onChange({ ...preferences, speakRate: v })} />
+  </div>;
+}
+
 export function SettingsWindow({ open, onClose, preferences, onChange, connector }: {
   open: boolean; onClose: () => void; preferences: Preferences; onChange: (p: Preferences) => void; connector: string | null;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [capturing, setCapturing] = useState(false);
+  const speechIssue = speechDiagnostic();
   useEffect(() => {
     if (open) dialog.current?.showModal();
     else { dialog.current?.close(); setCapturing(false); }
@@ -72,12 +112,16 @@ export function SettingsWindow({ open, onClose, preferences, onChange, connector
           <span><span className="block text-sm font-medium">{mode === "hold" ? "Hold to talk" : "Toggle to talk"}</span><span className="text-xs text-muted-foreground">{mode === "hold" ? "Record while the mic button or shortcut is held." : "Press once to start, again to stop and transcribe."}</span></span>
         </label>)}
       </fieldset>
-      {speechSupported() && <section className="space-y-2">
-        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-3">
-          <span><span className="block text-sm font-medium">Speak replies</span><span className="text-xs text-muted-foreground">Read voice responses and status answers aloud.</span></span>
-          <input type="checkbox" checked={preferences.speakReplies} onChange={event => onChange({ ...preferences, speakReplies: event.target.checked })} className="size-4 accent-current" />
-        </label>
-      </section>}
+      <section className="space-y-2">
+        <h3 className="text-sm font-medium">Spoken replies</h3>
+        {speechIssue ? <p role="note" className="rounded-lg border p-3 text-xs text-muted-foreground">{speechIssue}</p> : <>
+          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-3">
+            <span><span className="block text-sm font-medium">Speak replies</span><span className="text-xs text-muted-foreground">Read voice responses and status answers aloud.</span></span>
+            <input type="checkbox" checked={preferences.speakReplies} onChange={event => onChange({ ...preferences, speakReplies: event.target.checked })} className="size-4 accent-current" />
+          </label>
+          {preferences.speakReplies && <div className="rounded-lg border p-3"><VoiceTuning preferences={preferences} onChange={onChange} /></div>}
+        </>}
+      </section>
       {notificationsSupported() && <section className="space-y-2">
         <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-3">
           <span><span className="block text-sm font-medium">Desktop alerts</span><span className="text-xs text-muted-foreground">Notify when an agent finishes, loops or grows a big diff.</span></span>

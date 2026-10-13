@@ -3,7 +3,7 @@ import { CheckCircle2Icon, TriangleAlertIcon, XIcon } from "lucide-react";
 import type { State } from "../state";
 import type { Command } from "../live";
 import type { Preferences } from "./preferences";
-import { speak } from "./speech";
+import { speakReply } from "./speech";
 import { detectAlerts, freshAlerts, nextWorkingSince, notifyAlert, type Alert, type Observed } from "./alerts";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +48,7 @@ export function useAlerts(state: State | null, prefs: Preferences) {
     });
     for (const a of fresh) {
       if (prefsRef.current.notifyAlerts) notifyAlert(`hubert: ${a.title}`, a.detail);
-      if (prefsRef.current.speakReplies) speak(a.detail);
+      if (prefsRef.current.speakReplies) speakReply(a.detail, "alert", prefsRef.current);
     }
   }, [state]);
 

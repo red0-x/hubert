@@ -9,6 +9,7 @@ import { VoicePanel, runAction, type VoiceSignal } from "./voice-panel";
 import { MascotCharacter, mascotState } from "./mascot";
 import { isTypingElement, NAV_FALLBACK_SELECTOR, NAV_ITEM_SELECTOR, resolveKey } from "./keyboard";
 import { SettingsWindow, usePreferences } from "./settings";
+import { setSpeechListening } from "./speech";
 import { AlertsStrip, useAlerts } from "./alerts-view";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -249,7 +250,11 @@ function App() {
   }, [s]);
   // The voice panel owns the recorder and its shortcut; these signals drive the mascot and settings.
   const onVoiceSignal = useCallback((signal: VoiceSignal) => {
-    if (signal.kind === "recorder") setVoiceState(signal.state);
+    if (signal.kind === "recorder") {
+      setVoiceState(signal.state);
+      // Never speak into the open mic: mute and cancel the moment recording starts.
+      setSpeechListening(signal.state === "starting" || signal.state === "listening");
+    }
     else if (signal.kind === "connector") setConnector(signal.connector);
     else if (signal.kind === "start") { setVoiceError(false); setThinking(true); }
     else if (signal.kind === "done") { setThinking(false); setAnsweredAt(signal.at); }
