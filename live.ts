@@ -1,7 +1,10 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "path";
-import { cachedTailLines } from "./tail-cache";
+import { cachedTailLines, memo } from "./tail-cache";
+
+// ponytail: one second, matching the client's 1.5s poll; the polled endpoints share one scan
+const LIVE_TTL = 1000;
 
 export type Command = {
   agent: string;
@@ -18,11 +21,16 @@ export type Command = {
 
 export type EditEvent = { agent: string; root: string; path: string; ts: number };
 
-/** Count actual file-edit tool calls in recent journal tails, not git status snapshots. */
+/** Count actual file-edit tool calls in recent journal tails, not git status snapshots. Cached for a second per repo set. */
 export function editEvents(repos: { root: string }[],
   jcodeDir = join(process.env.JCODE_HOME ?? join(homedir(), ".jcode"), "sessions"),
   claudeDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects"),
   codexDir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions")): EditEvent[] {
+  const key = `edits\u0000${repos.map((r) => r.root).join("\u0000")}\u0000${jcodeDir}\u0000${claudeDir}\u0000${codexDir}`;
+  return memo(key, LIVE_TTL, () => editEventsOnce(repos, jcodeDir, claudeDir, codexDir));
+}
+
+function editEventsOnce(repos: { root: string }[], jcodeDir: string, claudeDir: string, codexDir: string): EditEvent[] {
   const files = recentFiles(jcodeDir, ".journal.jsonl").map(path => ({ path, source: "jcode" }));
   try { for (const dir of readdirSync(claudeDir)) for (const path of recentFiles(join(claudeDir, dir), ".jsonl")) files.push({ path, source: "claude" }); } catch {}
   const events: EditEvent[] = [];
@@ -168,6 +176,11 @@ export function recentCommands(
   claudeDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects"),
   codexDir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions"),
 ): Command[] {
+  // /api/commands and /api/command-stats are separate polls of the same scan; share one result per second.
+  return memo(`commands\u0000${jcodeDir}\u0000${claudeDir}\u0000${codexDir}`, LIVE_TTL, () => recentCommandsOnce(jcodeDir, claudeDir, codexDir));
+}
+
+function recentCommandsOnce(jcodeDir: string, claudeDir: string, codexDir: string): Command[] {
   const files: { path: string; source: Command["source"] }[] = recentFiles(jcodeDir, ".journal.jsonl").map(path => ({ path, source: "jcode" }));
   try {
     for (const dir of readdirSync(claudeDir)) {

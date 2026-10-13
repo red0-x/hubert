@@ -2,7 +2,7 @@ import { readdirSync, statSync, openSync, readSync, closeSync, readFileSync, exi
 import { Database } from "bun:sqlite";
 import { homedir } from "os";
 import { join, basename } from "path";
-import { cachedTailLines, jsonLines } from "./tail-cache";
+import { cachedTailLines, jsonLines, memoAsync } from "./tail-cache";
 
 export { jsonLines }; // re-exported so state.test.ts keeps importing it from here
 
@@ -276,15 +276,26 @@ function cursorAgents(now: number): Agent[] {
   return agents;
 }
 
-function git(cwd: string, args: string[]): string | null {
-  const r = Bun.spawnSync(["git", "-C", cwd, ...args], { stderr: "ignore" });
-  return r.exitCode === 0 ? r.stdout.toString() : null;
+const GIT_TTL = 1000; // status/diff/rev-parse are re-run at most once per second, shared by all polls
+
+/** Run one git command and resolve its stdout, or null on a non-zero exit. Async so many can overlap. */
+async function runGit(cwd: string, args: string[]): Promise<string | null> {
+  const proc = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "ignore" });
+  const [out, code] = await Promise.all([new Response(proc.stdout as ReadableStream<Uint8Array>).text(), proc.exited]);
+  return code === 0 ? out : null;
 }
 
-const rootCache = new Map<string, string | null>();
-function repoRoot(cwd: string): string | null {
-  if (!rootCache.has(cwd)) rootCache.set(cwd, git(cwd, ["rev-parse", "--show-toplevel"])?.trim() || null);
-  return rootCache.get(cwd)!;
+/** Memoized git: identical (cwd, args) within a second returns the cached stdout, in-flight runs are shared. */
+function git(cwd: string, args: string[]): Promise<string | null> {
+  return memoAsync(`git\u0000${cwd}\u0000${args.join("\u0000")}`, GIT_TTL, () => runGit(cwd, args));
+}
+
+// Repo roots never change for a given cwd, so the resolved promise is kept for the process lifetime.
+const rootCache = new Map<string, Promise<string | null>>();
+function repoRoot(cwd: string): Promise<string | null> {
+  let p = rootCache.get(cwd);
+  if (!p) { p = git(cwd, ["rev-parse", "--show-toplevel"]).then((out) => out?.trim() || null); rootCache.set(cwd, p); }
+  return p;
 }
 
 /** Merge `git status --porcelain` and `git diff --numstat HEAD` output. */
@@ -305,22 +316,39 @@ export function parseChanges(porcelain: string, numstat: string): FileChange[] {
   return files;
 }
 
-function repoInfo(root: string): Omit<Repo, "agents"> {
-  const porcelain = git(root, ["status", "--porcelain=v1", "-b", "--untracked-files=all"]) ?? "";
-  const numstat = git(root, ["diff", "--numstat", "HEAD"]) ?? "";
-  const branch = porcelain.match(/^## (?:No commits yet on )?([^.\s]+)/)?.[1] ?? "?";
-  return { root, name: basename(root), branch, files: parseChanges(porcelain, numstat) };
+export async function repoInfo(root: string): Promise<Omit<Repo, "agents">> {
+  const [porcelain, numstat] = await Promise.all([
+    git(root, ["status", "--porcelain=v1", "-b", "--untracked-files=all"]),
+    git(root, ["diff", "--numstat", "HEAD"]),
+  ]);
+  const branch = (porcelain ?? "").match(/^## (?:No commits yet on )?([^.\s]+)/)?.[1] ?? "?";
+  return { root, name: basename(root), branch, files: parseChanges(porcelain ?? "", numstat ?? "") };
 }
 
-export function collect() {
+export type State = { now: number; agents: Agent[]; repos: Repo[] };
+
+// ponytail: one second, matching the client's 1.5s poll; the 4 polled endpoints share one compute
+const COLLECT_TTL = 1000;
+
+/**
+ * Snapshot of agents and their repos. Cached for a second with in-flight dedupe so /api/state,
+ * /api/edits and /api/diff in one poll cycle pay for the directory scans and git calls once.
+ */
+export function collect(): Promise<State> {
+  return memoAsync("collect", COLLECT_TTL, collectOnce);
+}
+
+async function collectOnce(): Promise<State> {
   const now = Date.now();
   const piRoot = (dir: string) => join(HOME, dir, "agent", "sessions");
   const agents = [...jcodeAgents(now), ...claudeAgents(now), ...codexAgents(now), ...piAgents(now, "omp", piRoot(".omp")), ...piAgents(now, "pi", piRoot(".pi")), ...opencodeAgents(now), ...cursorAgents(now)].sort((a, b) => b.lastActive - a.lastActive);
-  const repos = new Map<string, Repo>();
+  // Resolve every agent's repo root in parallel, then the changed files of each distinct repo in parallel.
+  const roots = await Promise.all(agents.map((a) => (a.cwd ? repoRoot(a.cwd) : Promise.resolve(null))));
+  agents.forEach((a, i) => { a.repo = roots[i] ?? null; });
+  const distinct = [...new Set(agents.filter((a) => a.repo && a.state !== "closed" && a.state !== "crashed").map((a) => a.repo!))];
+  const repos = new Map<string, Repo>((await Promise.all(distinct.map(repoInfo))).map((info) => [info.root, { ...info, agents: [] }]));
   for (const a of agents) {
-    a.repo = a.cwd ? repoRoot(a.cwd) : null;
     if (!a.repo || a.state === "closed" || a.state === "crashed") continue;
-    if (!repos.has(a.repo)) repos.set(a.repo, { ...repoInfo(a.repo), agents: [] });
     repos.get(a.repo)!.agents.push(a.name);
   }
   return { now, agents, repos: [...repos.values()] };

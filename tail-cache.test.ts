@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, appendFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { cachedTailLines, clearTailCache, tailCacheStats } from "./tail-cache";
+import { cachedTailLines, clearMemoCache, clearTailCache, memo, memoAsync, tailCacheStats } from "./tail-cache";
 
 test("cachedTailLines caches by mtime+size and re-reads after a change", () => {
   const dir = mkdtempSync(join(tmpdir(), "hubert-cache-"));
@@ -41,4 +41,32 @@ test("cachedTailLines reads only the tail and skips a partial first line", () =>
 test("cachedTailLines returns [] for a missing file", () => {
   clearTailCache();
   expect(cachedTailLines(join(tmpdir(), "hubert-does-not-exist-xyz.jsonl"), 1024)).toEqual([]);
+});
+
+test("memo serves a cached value until the ttl expires, and never caches a throw", async () => {
+  clearMemoCache();
+  let runs = 0;
+  const value = () => memo("k", 30, () => ++runs);
+  expect(value()).toBe(1);
+  expect(value()).toBe(1); // still inside the window
+  await Bun.sleep(40);
+  expect(value()).toBe(2); // expired, recomputed
+  expect(() => memo("boom", 1000, () => { throw new Error("nope"); })).toThrow("nope");
+  expect(memo("boom", 1000, () => "recovered")).toBe("recovered");
+});
+
+test("memoAsync dedupes concurrent callers and drops a rejected run", async () => {
+  clearMemoCache();
+  let runs = 0;
+  const slow = () => memoAsync("slow", 1000, async () => { runs++; await Bun.sleep(10); return runs; });
+  // Two callers before the first run settles share one execution.
+  expect(await Promise.all([slow(), slow()])).toEqual([1, 1]);
+  expect(runs).toBe(1);
+  expect(await slow()).toBe(1); // cached within the ttl
+  expect(runs).toBe(1);
+
+  let attempts = 0;
+  const flaky = () => memoAsync("flaky", 1000, async () => { attempts++; if (attempts === 1) throw new Error("transient"); return "ok"; });
+  await expect(flaky()).rejects.toThrow("transient");
+  expect(await flaky()).toBe("ok"); // failure was not cached
 });

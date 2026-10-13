@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { jsonLines, lastTool, parseChanges } from "./state";
+import { jsonLines, lastTool, parseChanges, collect, repoInfo } from "./state";
+import { clearMemoCache } from "./tail-cache";
 
 test("parseChanges merges porcelain + numstat, handles renames and untracked", () => {
   const porcelain = "## main...origin/main\n M a.ts\nR  old.ts -> new.ts\n?? b.ts\n";
@@ -26,9 +27,9 @@ test("lastTool picks the newest tool_use and prefers intent", () => {
 });
 
 import { codexDoing, piDoing, resolveSlug } from "./state";
-import { mkdtempSync, mkdirSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
 
 test("codexDoing reads function_call JSON args and custom_tool_call JS", () => {
   expect(codexDoing([{ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: '{"cmd":"ls -la"}' } }])).toBe("exec_command: ls -la");
@@ -43,4 +44,34 @@ test("resolveSlug disambiguates dashes and dots against real directories", () =>
   mkdirSync(join(base, "my-app", ".config"), { recursive: true });
   expect(resolveSlug("my-app-config", base)).toBe(join(base, "my-app", ".config"));
   expect(resolveSlug("nope", base)).toBeNull();
+});
+
+test("collect shares one in-flight scan and stays cached inside the ttl", async () => {
+  clearMemoCache();
+  const first = collect();
+  expect(collect()).toBe(first); // same promise: no second directory scan or git round
+  const state = await first;
+  expect(Array.isArray(state.agents)).toBe(true);
+  expect(Array.isArray(state.repos)).toBe(true);
+  expect(collect()).toBe(first); // still fresh
+});
+
+test("repoInfo reads branch and changes through the async parallel git path", async () => {
+  const root = mkdtempSync(join(tmpdir(), "hubert-repo-"));
+  try {
+    const git = (...args: string[]) => Bun.spawnSync(["git", "-C", root, ...args], { stderr: "pipe" });
+    git("init", "-b", "main");
+    writeFileSync(join(root, "a.txt"), "one\n");
+    git("add", "a.txt");
+    const commit = git("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=T", "-c", "user.email=t@example.org", "commit", "-m", "init");
+    expect(commit.exitCode, commit.stderr.toString()).toBe(0);
+    writeFileSync(join(root, "a.txt"), "one\ntwo\n"); // +1 tracked line
+    writeFileSync(join(root, "b.txt"), "new\n"); // untracked
+    const info = await repoInfo(root);
+    expect(info).toMatchObject({ name: basename(root), branch: "main" });
+    expect(info.files.map((f) => [f.path, f.status, f.add, f.del])).toEqual([
+      ["a.txt", "M", 1, 0],
+      ["b.txt", "??", 0, 0],
+    ]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

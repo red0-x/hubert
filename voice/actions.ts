@@ -51,8 +51,8 @@ export function focusAgent(name: string): string {
   throw new Error(`could not find the terminal window for ${name}`);
 }
 
-export function sendToAgent(name: string, text: string): string {
-  const a = collect().agents.find((x) => x.name === name && (x.state === "working" || x.state === "idle"));
+export async function sendToAgent(name: string, text: string): Promise<string> {
+  const a = (await collect()).agents.find((x) => x.name === name && (x.state === "working" || x.state === "idle"));
   if (!a) throw new Error(`${name} is not a running agent`);
   if (a.source === "jcode") {
     const r = run(["jcode", "--quiet", "--no-update", "--no-selfdev", "transcript", "--session", a.id, "--mode", "send", text], tmpdir());
@@ -90,8 +90,8 @@ export function windowCommand(action: unknown, windows: Window[]): string[] {
   return ["hyprctl", "dispatch", "resizewindowpixel", `exact ${a.width} ${a.height},address:${a.address}`];
 }
 
-export function statusOf(name: string): string {
-  const a = collect().agents.find((x) => x.name === name);
+export async function statusOf(name: string): Promise<string> {
+  const a = (await collect()).agents.find((x) => x.name === name);
   if (!a) throw new Error(`no agent ${name}`);
   return `${a.name} is ${a.state}${a.repo ? ` in ${basename(a.repo)}` : ""}${a.doing ? `. Last: ${a.doing}` : ""}`;
 }
@@ -100,7 +100,7 @@ export const NEEDS_CONFIRM = new Set<Action["type"]>(["send", "stop", "move", "r
 
 /** Interrupt a running jcode turn through the harness API. Other agents expose no inbound control. */
 export async function stopAgent(name: string): Promise<string> {
-  const a = collect().agents.find((x) => x.name === name && (x.state === "working" || x.state === "idle"));
+  const a = (await collect()).agents.find((x) => x.name === name && (x.state === "working" || x.state === "idle"));
   if (!a) throw new Error(`${name} is not running`);
   if (a.source !== "jcode") throw new Error(`${name} is a ${a.source} agent: Hubert can only interrupt jcode agents (${a.source} has no inbound control API)`);
   await cancelTurn(a.id);

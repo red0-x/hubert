@@ -50,3 +50,41 @@ export function cachedTailLines(path: string, bytes: number): any[] {
 
 export function tailCacheStats() { return { ...stats, size: cache.size }; }
 export function clearTailCache() { cache.clear(); stats.hits = 0; stats.misses = 0; }
+
+type TtlEntry = { at: number; value: unknown };
+const memoCache = new Map<string, TtlEntry>();
+// ponytail: fixed cap; keys are dirs/repos, which are few and stable in practice
+const MAX_MEMO = 256;
+
+function remember(key: string, entry: TtlEntry) {
+  memoCache.delete(key); // re-insert so Map order stays least-recently-set first
+  if (memoCache.size >= MAX_MEMO) { const oldest = memoCache.keys().next().value; if (oldest !== undefined) memoCache.delete(oldest); }
+  memoCache.set(key, entry);
+}
+
+/** Cached result for `ttlMs`. Expired keys recompute; a throw is never cached. */
+export function memo<T>(key: string, ttlMs: number, fn: () => T): T {
+  const now = Date.now();
+  const hit = memoCache.get(key);
+  if (hit && now - hit.at < ttlMs) return hit.value as T;
+  const value = fn();
+  remember(key, { at: now, value });
+  return value;
+}
+
+/**
+ * Cached promise for `ttlMs` with in-flight dedupe: callers that arrive while the first run is
+ * still pending share it instead of starting a second one. A rejected run is dropped so the next
+ * call retries. Used so the 4 polled endpoints never pay for the same directory scan twice.
+ */
+export function memoAsync<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const hit = memoCache.get(key);
+  if (hit && now - hit.at < ttlMs) return Promise.resolve(hit.value as T);
+  const promise = fn();
+  remember(key, { at: now, value: promise });
+  promise.catch(() => { if (memoCache.get(key)?.value === promise) memoCache.delete(key); });
+  return promise;
+}
+
+export function clearMemoCache() { memoCache.clear(); }

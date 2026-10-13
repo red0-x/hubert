@@ -34,7 +34,7 @@ test("routes reject foreign Host/Origin before touching any data source", async 
     collect: (() => { throw new Error("collect must not run"); }) as unknown as Deps["collect"],
     fileDiff: () => { throw new Error("fileDiff must not run"); },
   });
-  expect(diffRoute(new Request(BASE + "/api/diff?root=/repo&file=a.ts", { headers: { host: "evil.example" } }), boom).status).toBe(403);
+  expect((await diffRoute(new Request(BASE + "/api/diff?root=/repo&file=a.ts", { headers: { host: "evil.example" } }), boom)).status).toBe(403);
   expect((await executeRoute(post("/api/execute", "{}", { host: "evil.example" }), boom)).status).toBe(403);
   expect((await transcribeRoute(new Request(BASE + "/api/transcribe", { method: "POST", headers: { host: HOST, origin: "http://evil.example", "content-type": "audio/wav" }, body: new Uint8Array([1]) }), boom)).status).toBe(403);
 });
@@ -42,11 +42,11 @@ test("routes reject foreign Host/Origin before touching any data source", async 
 test("/api/diff returns 400 for a traversal or an unlisted file, 400 when fileDiff rejects, 200 otherwise", async () => {
   const deps = makeDeps({ collect: collectStub, fileDiff: () => "diff --git a/a.ts b/a.ts" });
   // Traversal is not a listed changed file, so it never reaches fileDiff.
-  expect(diffRoute(get("/api/diff?root=/repo&file=../../etc/passwd"), deps).status).toBe(400);
-  expect(diffRoute(get("/api/diff?root=/elsewhere&file=a.ts"), deps).status).toBe(400);
+  expect((await diffRoute(get("/api/diff?root=/repo&file=../../etc/passwd"), deps)).status).toBe(400);
+  expect((await diffRoute(get("/api/diff?root=/elsewhere&file=a.ts"), deps)).status).toBe(400);
   const rejecting = makeDeps({ collect: collectStub, fileDiff: () => { throw new Error("invalid path"); } });
-  expect(diffRoute(get("/api/diff?root=/repo&file=a.ts"), rejecting).status).toBe(400);
-  const ok = diffRoute(get("/api/diff?root=/repo&file=a.ts"), deps);
+  expect((await diffRoute(get("/api/diff?root=/repo&file=a.ts"), rejecting)).status).toBe(400);
+  const ok = await diffRoute(get("/api/diff?root=/repo&file=a.ts"), deps);
   expect(ok.status).toBe(200);
   expect(await ok.text()).toContain("diff --git");
 });
