@@ -70,6 +70,8 @@ Hold the mic button (or your shortcut) and speak. Simple requests such as focusi
 
 - Focus and status run immediately. Sending a message, interrupting an agent, and moving or resizing a window need a click on **Do it**.
 - Hubert does **not** open or close windows or agents by voice. Hyprland arrangement is limited to validated move and resize.
+- While you hold the mic, a provisional draft of your words appears (local connectors only, never billed cloud STT). It is display-only. The final transcript on release is the only thing that acts.
+- Spoken replies use the browser's speech voices. Pick a voice, pitch (default 1.5, a lighter voice) and rate in Settings.
 - Choose a speech-to-text connector with `HUBERT_STT`:
 
 | Variable | Purpose |

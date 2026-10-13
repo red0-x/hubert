@@ -13,7 +13,7 @@ export type Preferences = {
 
 export const SPEAK_PITCH_MIN = 0.5;
 export const SPEAK_PITCH_MAX = 2;
-export const SPEAK_PITCH_DEFAULT = 1.2;
+export const SPEAK_PITCH_DEFAULT = 1.5;
 export const SPEAK_RATE_MIN = 0.5;
 export const SPEAK_RATE_MAX = 2;
 export const SPEAK_RATE_DEFAULT = 1;
