@@ -14,7 +14,7 @@ export async function audioDevices() {
     catch { return []; }
   };
   const get = async (k: string) => (await run(["pactl", k]))?.trim() || null;
-  return { sinks: await list("sinks"), sources: await list("sources"), defaultSink: await get("get-default-sink"), defaultSource: await get("get-default-source"), tts: !!Bun.which("paplay") && (piperReady() || !!Bun.which("espeak-ng")) };
+  return { sinks: await list("sinks"), sources: await list("sources"), defaultSink: await get("get-default-sink"), defaultSource: await get("get-default-source"), tts: !!Bun.which("paplay") && (kokoroReady() || piperReady() || !!Bun.which("espeak-ng")) };
 }
 
 /** Make `name` the system default microphone (WebKit records from the default source). */
@@ -31,6 +31,11 @@ const HOME = join(homedir(), ".local", "share", "hubert");
 const PIPER = join(HOME, "tts-venv", "bin", "piper");
 /** HUBERT_TTS_VOICE overrides the voice name (file in ~/.local/share/hubert/voices). */
 const voiceFile = () => join(HOME, "voices", `${process.env.HUBERT_TTS_VOICE?.replace(/[^\w.-]/g, "") || "en_GB-jenny_dioco-medium"}.onnx`);
+const KOKORO = join(HOME, "kokoro", "kokoro.onnx");
+const PY = join(HOME, "tts-venv", "bin", "python");
+const kokoroReady = () => existsSync(KOKORO) && existsSync(PY);
+/** HUBERT_TTS_KOKORO: a voice or a ":"-blend. Default is a bright, young female mix. */
+const kokoroVoice = () => process.env.HUBERT_TTS_KOKORO?.replace(/[^\w:]/g, "") || "af_heart:af_bella";
 const piperReady = () => existsSync(PIPER) && existsSync(voiceFile());
 
 let current: Proc[] = [];
@@ -38,10 +43,18 @@ export function stopTts() { for (const p of current) try { p.kill(); } catch {} 
 
 /** pitch/rate use the same 0.5..2 scale as the browser API. Unknown sink = default output. */
 export async function speakTts(text: string, pitch: number, rate: number, sink: string | null): Promise<boolean> {
-  if (!Bun.which("paplay") || !(piperReady() || Bun.which("espeak-ng"))) return false;
+  if (!Bun.which("paplay") || !(kokoroReady() || piperReady() || Bun.which("espeak-ng"))) return false;
   const device = sink && (await audioDevices()).sinks.some(s => s.name === sink) ? [`--device=${sink}`] : [];
   stopTts();
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : 1));
+  if (kokoroReady()) {
+    // Kokoro neural voice (24 kHz). Playing slightly faster than the model rate lifts pitch for a younger, brighter sound.
+    const lift = 1 + (clamp(pitch, 0.5, 2) - 1) * 0.25;
+    const k = Bun.spawn([PY, join(import.meta.dir, "kokoro-say.py"), kokoroVoice(), String(clamp(rate, 0.5, 2) * 1.05 / lift)], { stdin: new Blob([text.replace(/\s+/g, " ")]), stdout: "pipe", stderr: "ignore" });
+    const play = Bun.spawn(["paplay", "--raw", "--format=s16le", "--channels=1", `--rate=${Math.round(24000 * lift)}`, ...device], { stdin: k.stdout, stdout: "ignore", stderr: "ignore" });
+    current = [k, play];
+    return true;
+  }
   if (piperReady()) {
     // Neural voice. Raw s16 mono piped to paplay; playing slightly faster than the model rate lifts pitch for a brighter, younger sound.
     const sr = (JSON.parse(readFileSync(`${voiceFile()}.json`, "utf8")).audio?.sample_rate as number) || 22050;
