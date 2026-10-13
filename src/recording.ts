@@ -167,7 +167,8 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
         if (previewInFlight) { try { await previewInFlight; } catch {} }
         if (disposed || id !== generation) return;
         const blob = new Blob(chunks, { type: type() });
-        if (endedAt - startedAt < MIN_RECORDING_MS || blob.size < 2000) { update("idle"); onError("Recording too short, ignored. Hold the mic a little longer."); return; }
+        const ms = endedAt - startedAt;
+        if (ms < MIN_RECORDING_MS || blob.size < 200) { update("idle"); onError(`Recording too short, ignored (${ms} ms, ${blob.size} bytes, ${chunks.length} chunks). Hold the mic a little longer.`); return; }
         if (metered && peak < MIN_SPEECH_LEVEL) { update("idle"); onError("Heard only silence. Check the input device and speak closer to the mic."); return; }
         update("transcribing");
         const controller = new AbortController();
