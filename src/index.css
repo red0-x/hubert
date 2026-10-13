@@ -140,12 +140,37 @@
 .hubert-mascot-drag:focus-visible { outline: 2px solid var(--ring); border-radius: 8px; }
 .hubert-mascot-drag img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 
+/* Static state cue: visible even when motion is reduced. */
+.hubert-mascot-listening .hubert-mascot { filter: drop-shadow(0 0 6px var(--primary)); }
+.hubert-mascot-thinking .hubert-mascot { filter: drop-shadow(0 0 5px var(--muted-foreground)); }
+.hubert-mascot-speaking .hubert-mascot { filter: drop-shadow(0 0 7px var(--chart-2)); }
+.hubert-mascot-error .hubert-mascot { filter: drop-shadow(0 0 7px var(--destructive)); }
+
 @media (prefers-reduced-motion: no-preference) {
   .hubert-mascot-drag { transition: left 3s ease-in-out, top 3s ease-in-out; }
   .hubert-mascot-drag:active { transition: none; }
   .hubert-mascot { animation: hubert-bob 4s ease-in-out infinite; }
+  .hubert-mascot-listening .hubert-mascot { animation: hubert-listen 1.2s ease-in-out infinite; }
+  .hubert-mascot-thinking .hubert-mascot { animation: hubert-think 1.6s ease-in-out infinite; }
+  .hubert-mascot-speaking .hubert-mascot { animation: hubert-speak 0.55s ease-in-out infinite; }
+  .hubert-mascot-error .hubert-mascot { animation: hubert-shake 0.5s ease-in-out infinite; }
 }
 
 @keyframes hubert-bob {
   50% { transform: translateY(-3px); }
+}
+@keyframes hubert-listen {
+  50% { transform: scale(1.08); }
+}
+@keyframes hubert-think {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+@keyframes hubert-speak {
+  50% { transform: translateY(-5px) scale(1.05); }
+}
+@keyframes hubert-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
 }

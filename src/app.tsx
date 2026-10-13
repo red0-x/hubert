@@ -4,6 +4,8 @@ import { BotIcon, GitBranchIcon, GitCompareIcon, MicIcon, SettingsIcon, Terminal
 import { toast } from "sonner";
 import type { Agent, Repo } from "../state";
 import { useVoice } from "./use-voice";
+import { speak } from "./speech";
+import { Mascot, mascotState } from "./mascot";
 import { SettingsWindow, usePreferences } from "./settings";
 import { ChangeMap, CommandsView, DiffView } from "./live-view";
 import { cn } from "@/lib/utils";
@@ -25,27 +27,32 @@ type PlanAction = { type: string; agent?: string; text?: string; address?: strin
 const label = (a: PlanAction) =>
   a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "move" ? `Move ${a.targetTitle ?? a.address} (${a.address}) to ${a.x}, ${a.y}` : a.type === "resize" ? `Resize ${a.targetTitle ?? a.address} (${a.address}) to ${a.width} × ${a.height}` : a.type === "focus" ? `Focus ${a.agent}` : a.type === "stop" ? `Interrupt ${a.agent}` : `Status of ${a.agent}`;
 
-async function runAction(a: PlanAction, confirmed: boolean) {
+async function runAction(a: PlanAction, confirmed: boolean, speakReplies = false) {
   const { needsConfirm, ...action } = a;
   const r = await fetch("/api/execute", { method: "POST", body: JSON.stringify({ action, confirmed }) }).catch(() => null);
   if (!r) return toast.error("hubert server is not reachable");
   const body = await r.text();
   if (!r.ok) return toast.error(body);
-  toast.success((JSON.parse(body) as { result: string }).result);
+  const result = (JSON.parse(body) as { result: string }).result;
+  if (speakReplies) speak(result);
+  toast.success(result);
 }
 
 /** Transcript -> plan (grammar first, light model otherwise). Mutations wait for a click. */
-async function handleSpeech(text: string, connector: string) {
+async function handleSpeech(text: string, connector: string, on?: (event: "start" | "done" | "error") => void, speakReplies = false) {
   const id = toast.loading(`“${text}”`, { description: "Thinking…" });
+  on?.("start");
   const r = await fetch("/api/voice", { method: "POST", body: JSON.stringify({ text }) }).catch(() => null);
-  if (!r?.ok) return toast.error(r ? await r.text() : "hubert server is not reachable", { id });
+  if (!r?.ok) { on?.("error"); return toast.error(r ? await r.text() : "hubert server is not reachable", { id }); }
   const plan = (await r.json()) as { say: string; actions: PlanAction[]; dropped: string[]; via: string };
   toast.dismiss(id);
+  on?.("done");
   const desc = `${plan.via === "grammar" ? "" : `${plan.via} \u00b7 `}${connector}`;
+  if (speakReplies && plan.say) speak(plan.say);
   if (!plan.actions.length) return toast(plan.say || "No matching command", { description: `“${text}” \u00b7 ${desc}` });
   for (const a of plan.actions) {
-    if (!a.needsConfirm) await runAction(a, false);
-    else toast(label(a), { description: `${plan.say} \u00b7 ${desc}`, duration: 15000, action: { label: "Do it", onClick: () => void runAction(a, true) }, cancel: { label: "Cancel", onClick: () => {} } });
+    if (!a.needsConfirm) await runAction(a, false, speakReplies);
+    else toast(label(a), { description: `${plan.say} \u00b7 ${desc}`, duration: 15000, action: { label: "Do it", onClick: () => void runAction(a, true, speakReplies) }, cancel: { label: "Cancel", onClick: () => {} } });
   }
   for (const d of plan.dropped) toast.warning(`Ignored: ${d}`);
 }
@@ -159,9 +166,17 @@ function App() {
   const [selectedFile, setSelectedFile] = useState<{ root: string; path: string } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [prefs, setPrefs] = usePreferences();
+  // Signals that drive the mascot's pose.
+  const [thinking, setThinking] = useState(false);
+  const [answeredAt, setAnsweredAt] = useState(0);
+  const [voiceError, setVoiceError] = useState(false);
   const voice = useVoice(
-    handleSpeech,
-    useCallback((msg: string) => toast.error(msg), []),
+    useCallback((text: string, connector: string) => void handleSpeech(text, connector, (event) => {
+      if (event === "start") { setVoiceError(false); setThinking(true); }
+      else if (event === "done") { setThinking(false); setAnsweredAt(Date.now()); }
+      else { setThinking(false); setVoiceError(true); }
+    }, prefs.speakReplies), [prefs.speakReplies]),
+    useCallback((msg: string) => { setVoiceError(true); toast.error(msg); }, []),
   );
 
   // In-app shortcut: only while Hubert is focused and not typing in a field or pressing a button.
@@ -212,6 +227,7 @@ function App() {
   const working = s.agents.filter((a) => a.state === "working").length;
   const micOff = !voice.stt?.active;
   const micTip = voice.stt?.active ? `${prefs.voiceMode === "hold" ? "Hold" : "Click"} to talk (${voice.stt.active})` : "No speech-to-text connector configured, see README";
+  const mascot = mascotState({ stale, error: voiceError, voice: voiceState, thinking, answeredAt, now: Date.now() });
 
   return (
     <div className="flex h-svh flex-col">
@@ -298,6 +314,7 @@ function App() {
         </div>
       </ScrollArea>
       <SettingsWindow open={settingsOpen} onClose={() => setSettingsOpen(false)} preferences={prefs} onChange={setPrefs} connector={voice.stt?.active ?? null} />
+      <Mascot state={mascot} />
       <Toaster />
     </div>
   );

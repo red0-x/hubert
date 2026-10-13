@@ -10,8 +10,42 @@ export const bounds = (p: Point, width: number, height: number) => ({
   y: Math.round(clamp(p.y) * Math.max(0, height - Math.min(SIZE, height))),
 });
 
-/** Fixed viewport mascot. `roam` enables slow wandering; changing `resetKey` restores the default position. */
-export function Mascot({ roam = false, resetKey }: { roam?: boolean; resetKey?: number }) {
+export type MascotState = "idle" | "listening" | "thinking" | "speaking" | "error";
+
+/** How long a completed voice answer keeps Hubert in the `speaking` pose. */
+export const ANSWER_MS = 2500;
+
+export type MascotInput = {
+  stale?: boolean;
+  error?: boolean;
+  /** VoiceState from recording.ts: idle | starting | listening | transcribing */
+  voice?: string;
+  /** A voice request is in flight (recording done, awaiting plan). */
+  thinking?: boolean;
+  /** Timestamp of the last handled request, if any. */
+  answeredAt?: number;
+  now: number;
+};
+
+/** Resolve one mascot pose from app signals. Error beats thinking beats listening beats speaking. */
+export function mascotState({ stale, error, voice, thinking, answeredAt, now }: MascotInput): MascotState {
+  if (error || stale) return "error";
+  if (thinking || voice === "transcribing") return "thinking";
+  if (voice === "listening" || voice === "starting") return "listening";
+  if (answeredAt && now - answeredAt >= 0 && now - answeredAt < ANSWER_MS) return "speaking";
+  return "idle";
+}
+
+const LABEL: Record<MascotState, string> = {
+  idle: "idle",
+  listening: "listening",
+  thinking: "thinking",
+  speaking: "answered",
+  error: "error",
+};
+
+/** Fixed viewport mascot. `state` drives its pose; `roam` enables slow wandering; changing `resetKey` restores the default position. */
+export function Mascot({ state = "idle", roam = false, resetKey }: { state?: MascotState; roam?: boolean; resetKey?: number }) {
   const [point, setPoint] = useState<Point>(() => {
     try {
       const value = JSON.parse(localStorage.getItem(STORAGE) ?? "null");
@@ -52,7 +86,7 @@ export function Mascot({ roam = false, resetKey }: { roam?: boolean; resetKey?: 
     x: clamp(x / Math.max(1, size.width - Math.min(SIZE, size.width))),
     y: clamp(y / Math.max(1, size.height - Math.min(SIZE, size.height))),
   });
-  return <button type="button" className="hubert-mascot-drag" aria-label="Move Hubert mascot; use arrow keys to reposition" title="Drag Hubert or use arrow keys"
+  return <button type="button" className={`hubert-mascot-drag hubert-mascot-${state}`} data-state={state} aria-label={`Hubert mascot, ${LABEL[state]}; drag or use arrow keys to reposition`} title={`Hubert is ${LABEL[state]}. Drag or use arrow keys.`}
     style={{ left: pos.x, top: pos.y, transition: drag.current ? "none" : undefined }}
     onPointerDown={e => {
       if (e.button !== 0) return;
