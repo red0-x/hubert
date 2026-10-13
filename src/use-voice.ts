@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createVoiceRecorder, type VoiceState } from "./recording";
+import { stopSpeech } from "./speech";
 
 export type { VoiceState } from "./recording";
 type Stt = { active: string | null; connectors: { id: string; label: string; kind: string; unavailable: string | null }[] };
@@ -34,7 +35,7 @@ export function useVoice(onText: (text: string, connector: string, ms?: number) 
     // Global hotkey: the server owns start/stop so it works while the window is not focused.
     const events = new EventSource("/api/ptt/events");
     events.onmessage = (event) => {
-      if (event.data === "recording") { if (!pttActive.current) { pttActive.current = true; void recorder.current?.start(); } }
+      if (event.data === "recording") { if (!pttActive.current) { pttActive.current = true; stopSpeech(); void recorder.current?.start(); } }
       else if (pttActive.current) { pttActive.current = false; recorder.current?.stop(); }
     };
     // A push-to-talk recording must survive the window losing focus; in-app recording still cancels.
@@ -51,7 +52,7 @@ export function useVoice(onText: (text: string, connector: string, ms?: number) 
     };
   }, []);
 
-  const start = useCallback(() => { void recorder.current?.start(); }, []);
+  const start = useCallback(() => { stopSpeech(); void recorder.current?.start(); }, []);
   const stop = useCallback(() => recorder.current?.stop(), []);
   const cancel = useCallback(() => recorder.current?.cancel(), []);
   return { state, level, draft, stt, start, stop, cancel };

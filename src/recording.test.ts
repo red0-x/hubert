@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { createVoiceRecorder, micError, normalizeLevel } from "./recording";
+import { createVoiceRecorder, micError, normalizeLevel, PREVIEW_TIMEOUT_MS } from "./recording";
 
 test("normalizeLevel keeps silence at 0 and clamps loud input to 1", () => {
   expect(normalizeLevel(new Uint8Array(0))).toBe(0);
@@ -268,4 +268,31 @@ test("a denied microphone surfaces the message and never starts a preview", asyn
   expect(errors[0]).toMatch(/Allow microphone/);
   expect(previews).toBe(0);
   expect(Recorder.instances).toHaveLength(0);
+});
+
+test("a stalled preview is aborted at PREVIEW_TIMEOUT_MS and cannot block the final upload", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  // Fire only the preview's own cap immediately; the recording length timer passes through.
+  globalThis.setTimeout = ((fn: () => void, ms?: number) => { if (ms === PREVIEW_TIMEOUT_MS) { fn(); return 0; } return realSetTimeout(fn, ms); }) as unknown as typeof setTimeout;
+  try {
+    let aborted = false; let calls = 0;
+    globalThis.fetch = ((_url: string, init?: RequestInit) => {
+      calls++;
+      if (calls === 1) return new Promise<Response>((_res, rej) => { init?.signal?.addEventListener("abort", () => { aborted = true; rej(Object.assign(new Error("timeout"), { name: "AbortError" })); }); });
+      return Promise.resolve(Response.json({ text: "final words", connector: "local", ms: 1 }));
+    }) as unknown as typeof fetch;
+    const previews: string[] = []; const finals: string[] = [];
+    const recorder = createVoiceRecorder(() => {}, t => finals.push(t), () => {}, undefined, undefined, t => previews.push(t), () => true);
+    await recorder.start();
+    const r = lastRecorder();
+    clock += 1000; r.emit(3000); await Bun.sleep(0);
+    clock += 1000; r.emit(3000); await Bun.sleep(0);
+    expect(aborted).toBe(true); // the stalled snapshot hit its cap on its own
+    clock += 1000; recorder.stop(); await Bun.sleep(0); await Bun.sleep(0);
+    expect(calls).toBe(2); // the aborted preview + exactly one final upload
+    expect(finals).toEqual(["final words"]);
+    expect(previews).toEqual([]);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
 });

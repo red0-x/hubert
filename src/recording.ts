@@ -13,6 +13,8 @@ export const PREVIEW_INTERVAL_MS = 1800;
 export const PREVIEW_MIN_MS = 900;
 /** Hard cap on previews per recording, bounding request count. */
 export const MAX_PREVIEWS = 40;
+/** A preview that has not answered by this point is aborted, so it can never block the final upload. */
+export const PREVIEW_TIMEOUT_MS = 5000;
 /** Hard cap on one recording, bounding retained audio and whisper work. */
 export const MAX_RECORDING_MS = 120_000;
 
@@ -150,18 +152,22 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
           }
         })();
         previewInFlight = pending;
-        void pending.finally(() => { if (previewInFlight === pending) previewInFlight = null; });
+        const timer = setTimeout(() => controller.abort(), PREVIEW_TIMEOUT_MS);
+        void pending.finally(() => { clearTimeout(timer); if (previewInFlight === pending) previewInFlight = null; });
       };
       r.ondataavailable = e => { if (e.data.size) chunks.push(e.data); preview(); };
       r.onstop = async () => {
+        // Duration is fixed at release, before any preview wait, so a stall cannot turn a tap into a "recording".
+        const endedAt = Date.now();
         release!();
         if (recorder === r) { recorder = null; releaseActive = null; }
         if (disposed || id !== generation) return;
         // Never overlap the final upload with a preview: wait the last preview out first (it holds the socket).
+        // The preview has its own PREVIEW_TIMEOUT_MS cap, so this wait is bounded, never indefinite.
         if (previewInFlight) { try { await previewInFlight; } catch {} }
         if (disposed || id !== generation) return;
         const blob = new Blob(chunks, { type: type() });
-        if (Date.now() - startedAt < MIN_RECORDING_MS || blob.size < 2000) { update("idle"); onError("Recording too short, ignored. Hold the mic a little longer."); return; }
+        if (endedAt - startedAt < MIN_RECORDING_MS || blob.size < 2000) { update("idle"); onError("Recording too short, ignored. Hold the mic a little longer."); return; }
         if (metered && peak < MIN_SPEECH_LEVEL) { update("idle"); onError("Heard only silence. Check the input device and speak closer to the mic."); return; }
         update("transcribing");
         const controller = new AbortController();
