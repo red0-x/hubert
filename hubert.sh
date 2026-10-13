@@ -7,6 +7,15 @@ PORT="${HUBERT_PORT:-7777}"
 URL="http://127.0.0.1:$PORT"
 up() { curl -fs "$URL/api/state" >/dev/null 2>&1; }
 
+# Global push-to-talk for a window manager bind: `hubert.sh ptt start|stop|toggle`.
+if [ "${1:-}" = "ptt" ]; then
+  action="${2:-toggle}"
+  case "$action" in start|stop|toggle) ;; *) echo "usage: hubert.sh ptt start|stop|toggle" >&2; exit 2;; esac
+  curl -fsS -X POST "$URL/api/ptt" -H 'content-type: application/json' --data "{\"action\":\"$action\"}" >/dev/null \
+    || { echo "hubert: server is not running" >&2; exit 1; }
+  exit 0
+fi
+
 if ! up; then
   command -v bun >/dev/null || { echo "hubert: bun is required (https://bun.sh)" >&2; exit 1; }
   [ -d node_modules ] || bun install --frozen-lockfile

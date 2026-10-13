@@ -1,10 +1,12 @@
 import index from "./src/index.html";
 import { collect } from "./state";
 import { editEvents, fileDiff, recentCommands } from "./live";
+import { commandStats } from "./command-stats";
 import { sttStatus, transcribe } from "./voice/stt";
 import { brainStatus, intentToAction, plan, type Action } from "./voice/brain";
 import { NEEDS_CONFIRM, execute, listWindows } from "./voice/actions";
 import { describe, parseIntent } from "./voice/intent";
+import { isPttAction, resolvePtt, type PttState } from "./voice/ptt";
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
@@ -37,6 +39,15 @@ function guard(req: Request): Response | null {
   return null;
 }
 
+// Global push-to-talk: the CLI (`hubert.sh ptt …`) drives the state, the window follows it over SSE.
+let ptt: PttState = "idle";
+const pttClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
+const pttFrame = (data: string) => new TextEncoder().encode(`data: ${data}\n\n`);
+function pttBroadcast() {
+  for (const client of pttClients) { try { client.enqueue(pttFrame(ptt)); } catch { pttClients.delete(client); } }
+}
+setInterval(() => { for (const client of pttClients) { try { client.enqueue(new TextEncoder().encode(": ping\n\n")); } catch { pttClients.delete(client); } } }, 15000).unref();
+
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: PORT,
@@ -46,6 +57,7 @@ const server = Bun.serve({
     "/docs/mascot.png": (req) => guard(req) ?? new Response(Bun.file("./docs/mascot.png"), { headers: { "content-type": "image/png" } }),
     "/api/state": (req) => guard(req) ?? Response.json(collect()),
     "/api/commands": (req) => guard(req) ?? Response.json(recentCommands()),
+    "/api/command-stats": (req) => guard(req) ?? Response.json(commandStats(recentCommands())),
     "/api/edits": (req) => guard(req) ?? Response.json(editEvents(collect().repos)),
     "/api/diff": (req) => {
       const denied = guard(req);
@@ -59,6 +71,28 @@ const server = Bun.serve({
       catch (e) { return new Response((e as Error).message, { status: 400 }); }
     },
     "/api/stt": (req) => guard(req) ?? Response.json(sttStatus()),
+    // Global hotkey entry point. The CLI POSTs start/stop/toggle and every open window reacts over SSE.
+    "/api/ptt": {
+      POST: async (req) => {
+        const denied = guard(req);
+        if (denied) return denied;
+        const { action } = (await req.json().catch(() => ({}))) as { action?: unknown };
+        if (!isPttAction(action)) return new Response("action must be start, stop or toggle", { status: 400 });
+        ptt = resolvePtt(ptt, action);
+        pttBroadcast();
+        return Response.json({ state: ptt });
+      },
+    },
+    "/api/ptt/events": (req) => {
+      const denied = guard(req);
+      if (denied) return denied;
+      let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) { ctrl = c; pttClients.add(c); c.enqueue(pttFrame(ptt)); },
+        cancel() { pttClients.delete(ctrl); },
+      });
+      return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
+    },
     "/api/transcribe": {
       POST: async (req) => {
         const denied = guard(req);

@@ -8,6 +8,7 @@ export function useVoice(onText: (text: string, connector: string) => void, onEr
   const [state, setState] = useState<VoiceState>("idle");
   const [stt, setStt] = useState<Stt | null>(null);
   const recorder = useRef<ReturnType<typeof createVoiceRecorder> | null>(null);
+  const pttActive = useRef(false);
   const callbacks = useRef({ onText, onError });
   callbacks.current = { onText, onError };
 
@@ -15,12 +16,20 @@ export function useVoice(onText: (text: string, connector: string) => void, onEr
     let active = true;
     recorder.current = createVoiceRecorder(setState, (text, connector) => callbacks.current.onText(text, connector), message => callbacks.current.onError(message));
     fetch("/api/stt").then(r => r.json() as Promise<Stt>).then(data => { if (active) setStt(data); }).catch(() => {});
-    const cancel = () => recorder.current?.cancel();
+    // Global hotkey: the server owns start/stop so it works while the window is not focused.
+    const events = new EventSource("/api/ptt/events");
+    events.onmessage = (event) => {
+      if (event.data === "recording") { if (!pttActive.current) { pttActive.current = true; void recorder.current?.start(); } }
+      else if (pttActive.current) { pttActive.current = false; recorder.current?.stop(); }
+    };
+    // A push-to-talk recording must survive the window losing focus; in-app recording still cancels.
+    const cancel = () => { if (!pttActive.current) recorder.current?.cancel(); };
     const hidden = () => { if (document.hidden) cancel(); };
     window.addEventListener("blur", cancel);
     document.addEventListener("visibilitychange", hidden);
     return () => {
       active = false;
+      events.close();
       recorder.current?.dispose(); recorder.current = null;
       window.removeEventListener("blur", cancel);
       document.removeEventListener("visibilitychange", hidden);
