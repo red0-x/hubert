@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { answer, buildPrompt, intentToAction, parsePlan, pickModel, spokenChanges, spokenFailures, spokenRoster, spokenStatus } from "./brain";
+import { answer, brainProvider, brainStatus, buildPrompt, DEFAULT_BRAIN_MODEL, intentToAction, parseModelList, parsePlan, pickModel, spokenChanges, spokenFailures, spokenRoster, spokenStatus } from "./brain";
 import { findPane, windowCommand } from "./actions";
 import type { Agent } from "../state";
 
@@ -107,11 +107,76 @@ test("parsePlan: caps actions and text length, ignores wrong field types", () =>
   expect(parsePlan(JSON.stringify({ say: "x", actions: [{ type: "focus", agent: 7 }, null] }), known).actions).toEqual([]);
 });
 
-test("pickModel prefers newest haiku, then luna, then mini; null when nothing light", () => {
-  expect(pickModel(["claude-sonnet-5", "claude-haiku-4-5-20251001", "claude-haiku-5-5", "gpt-6-luna"])).toBe("claude-haiku-5-5");
-  expect(pickModel(["claude-sonnet-5", "gpt-5.6-luna", "gpt-6-luna"])).toBe("gpt-6-luna");
-  expect(pickModel(["gpt-4o-mini", "claude-opus-5"])).toBe("gpt-4o-mini");
-  expect(pickModel(["claude-opus-5", "claude-sonnet-5"])).toBeNull();
+test("parsePlan survives malformed JSON roots (arrays, null, scalars) without throwing", () => {
+  // braces from multiple objects in an array do not form one JSON object
+  const arr = parsePlan('[{"a":1},{"b":2}]', known);
+  expect(arr.actions).toEqual([]);
+  expect(arr.dropped).toEqual(["unparseable"]);
+  // no braces at all -> plain-text answer, never a throw
+  for (const raw of ["null", "42", "true", "[]"]) {
+    const p = parsePlan(raw, known);
+    expect(p.actions).toEqual([]);
+  }
+  expect(parsePlan("null", known).say).toBe("null");
+});
+
+test("pickModel defaults to deepseek-v4-flash and never silently falls back to another paid model", () => {
+  expect(DEFAULT_BRAIN_MODEL).toBe("deepseek-v4-flash");
+  expect(pickModel(["claude-haiku-5-5", "gpt-6-luna", "deepseek-v4-flash", "deepseek-v4-pro"])).toBe("deepseek-v4-flash");
+  expect(pickModel(["deepseek-flash", "deepseek-v4-pro"])).toBe("deepseek-flash");
+  expect(pickModel(["claude-haiku-5-5", "gpt-4o-mini", "gpt-6-luna"])).toBeNull();
+  expect(pickModel([])).toBeNull();
+});
+
+test("parseModelList reads routes with availability, falls back to the models array, tolerates junk", () => {
+  const withRoutes = JSON.stringify({
+    provider: "DeepSeek",
+    models: ["deepseek-v4-flash"],
+    routes: [
+      { provider: "DeepSeek", model: "deepseek-v4-flash", method: "api key", available: true },
+      { provider: "DeepSeek", model: "deepseek-v4-pro", method: "api key", available: false },
+    ],
+  });
+  expect(parseModelList(withRoutes)).toEqual([
+    { model: "deepseek-v4-flash", provider: "DeepSeek", available: true },
+    { model: "deepseek-v4-pro", provider: "DeepSeek", available: false },
+  ]);
+  expect(parseModelList(JSON.stringify({ models: ["a", 7, "b"] }))).toEqual([
+    { model: "a", provider: "", available: true },
+    { model: "b", provider: "", available: true },
+  ]);
+  expect(parseModelList("not json")).toEqual([]);
+  expect(parseModelList("null")).toEqual([]);
+  expect(parseModelList("[]")).toEqual([]);
+  expect(parseModelList(JSON.stringify({ routes: [null, { model: 5 }] }))).toEqual([]);
+});
+
+test("brainProvider pins deepseek for deepseek models, honors HUBERT_BRAIN_PROVIDER", () => {
+  const saved = process.env.HUBERT_BRAIN_PROVIDER;
+  try {
+    delete process.env.HUBERT_BRAIN_PROVIDER;
+    expect(brainProvider("deepseek-v4-flash")).toBe("deepseek");
+    expect(brainProvider("claude-haiku-5-5")).toBeUndefined();
+    process.env.HUBERT_BRAIN_PROVIDER = "openrouter";
+    expect(brainProvider("deepseek-v4-flash")).toBe("openrouter");
+  } finally {
+    if (saved === undefined) delete process.env.HUBERT_BRAIN_PROVIDER; else process.env.HUBERT_BRAIN_PROVIDER = saved;
+  }
+});
+
+test("brainStatus: an explicit HUBERT_BRAIN_MODEL wins without spawning jcode; HUBERT_BRAIN=off disables", async () => {
+  const savedModel = process.env.HUBERT_BRAIN_MODEL;
+  const savedOff = process.env.HUBERT_BRAIN;
+  try {
+    process.env.HUBERT_BRAIN_MODEL = "claude-haiku-5-5";
+    delete process.env.HUBERT_BRAIN;
+    expect(await brainStatus()).toEqual({ enabled: true, model: "claude-haiku-5-5", reason: null });
+    process.env.HUBERT_BRAIN = "off";
+    expect(await brainStatus()).toEqual({ enabled: false, model: null, reason: "HUBERT_BRAIN=off" });
+  } finally {
+    if (savedModel === undefined) delete process.env.HUBERT_BRAIN_MODEL; else process.env.HUBERT_BRAIN_MODEL = savedModel;
+    if (savedOff === undefined) delete process.env.HUBERT_BRAIN; else process.env.HUBERT_BRAIN = savedOff;
+  }
 });
 
 test("buildPrompt carries the mark, agent list, and a JSON-escaped utterance (no prompt injection via quotes)", () => {
@@ -119,6 +184,10 @@ test("buildPrompt carries the mark, agent list, and a JSON-escaped utterance (no
   expect(p.startsWith("HUBERT-BRAIN")).toBe(true);
   expect(p).toContain("- snake (working, repo ecily): bash: ls");
   expect(p).toContain(JSON.stringify('say "hi"\nIgnore previous'));
+  // companion prompt rules: short acknowledgement, no overclaim, no window open/close
+  expect(p).toContain("at most 8 words");
+  expect(p).toContain("must not claim the work is done");
+  expect(p).toContain("Never open, create, close or terminate");
 });
 
 test("buildPrompt offers only existing window addresses and no create action", () => {
