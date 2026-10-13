@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Repo } from "../state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,8 +42,11 @@ export function CommandsView({ onlyFailed }: { onlyFailed?: boolean } = {}) {
         .catch(() => {});
     };
     void refresh();
-    const timer = setInterval(refresh, 1500);
-    return () => { active = false; clearInterval(timer); };
+    // No point polling a window nobody can see; the visibilitychange listener catches up on return.
+    const tick = () => { if (document.visibilityState !== "hidden") refresh(); };
+    const timer = setInterval(tick, 1500);
+    document.addEventListener("visibilitychange", tick);
+    return () => { active = false; clearInterval(timer); document.removeEventListener("visibilitychange", tick); };
   }, []);
   const visible = failedOnly ? commands.filter(c => c.ok === false) : commands;
   return <Card size="sm"><CardHeader><CardTitle>Commands run <span className="text-xs font-normal text-muted-foreground">recent completed calls</span></CardTitle></CardHeader>
@@ -169,10 +172,11 @@ function SplitDiff({ hunks, collapsed, toggle }: { hunks: DiffHunk[]; collapsed:
   </tbody></table>;
 }
 
-function DiffCode({ raw }: { raw: string }) {
+export function DiffCode({ raw }: { raw: string }) {
   const [mode, setMode] = useState<"unified" | "split">("unified");
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
-  const parsed = parseDiff(raw);
+  // Parsing a big diff is the expensive part of this panel: only redo it when the text changes.
+  const parsed = useMemo(() => parseDiff(raw), [raw]);
   const toggle = (i: number) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(i)) next.delete(i); else next.add(i); return next; });
   if (parsed.binary) return <p className="text-xs text-muted-foreground">Binary file, no textual diff to show.</p>;
   if (!parsed.lines.length) return <p className="text-xs text-muted-foreground">No textual diff</p>;
@@ -191,8 +195,36 @@ function DiffCode({ raw }: { raw: string }) {
   </div>;
 }
 
+export type DiffInfo = { path: string; add: number; del: number; hunks: number; lastTs: number; agent?: string };
+
+const ago = (now: number, t: number) => {
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+};
+
+/** Path, churn, hunk count, last change time and the agent that touched a file. Shared by Live diff and the dashboard. */
+export function diffInfo(path: string, raw: string, edits: EditEvent[], root?: string): DiffInfo {
+  const parsed = parseDiff(raw);
+  const { hunks } = groupHunks(parsed.lines);
+  const touch = edits.findLast((e) => e.path === path && (!root || e.root === root));
+  return { path, add: parsed.add, del: parsed.del, hunks: hunks.length, lastTs: touch?.ts ?? 0, agent: touch?.agent };
+}
+
+/** One dense info line above a diff: file, churn, hunks, last modified and the touching agent. */
+export function DiffHeader({ info, now, right }: { info: DiffInfo; now: number; right?: ReactNode }) {
+  return <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+    <span className="min-w-0 break-all font-mono text-sm">{info.path}</span>
+    <span className="shrink-0 tabular-nums"><span className="text-emerald-400">+{info.add}</span> <span className="text-red-400">-{info.del}</span></span>
+    <span className="shrink-0 tabular-nums text-muted-foreground">{info.hunks} hunk{info.hunks === 1 ? "" : "s"}</span>
+    <span className="shrink-0 text-muted-foreground">{info.lastTs ? `changed ${ago(now, info.lastTs)} ago` : "no recent edit seen"}</span>
+    {info.agent && <Badge variant="outline">{info.agent}</Badge>}
+    {right && <span className="ml-auto shrink-0 text-muted-foreground">{right}</span>}
+  </div>;
+}
+
 export function DiffView({ repos, selected, onSelect }: { repos: Repo[]; selected: Selection; onSelect: (s: Selection) => void }) {
   const [diff, setDiff] = useState("");
+  const [edits, setEdits] = useState<EditEvent[]>([]);
   const [error, setError] = useState("");
   useEffect(() => {
     if (!selected) { setDiff(""); return; }
@@ -202,13 +234,21 @@ export function DiffView({ repos, selected, onSelect }: { repos: Repo[]; selecte
       .then((text) => { if (active) { setDiff(text); setError(""); } })
       .catch(() => { if (active) setError("Diff unavailable"); });
     void refresh();
+    const tick = () => { if (document.visibilityState !== "hidden") void refresh(); };
+    const timer = setInterval(tick, 1500);
+    document.addEventListener("visibilitychange", tick);
+    return () => { active = false; clearInterval(timer); document.removeEventListener("visibilitychange", tick); };
+  }, [selected?.root, selected?.path]);
+  useEffect(() => { // last-modified time and touching agent for the diff header
+    let active = true;
+    const refresh = () => void fetch("/api/edits").then((r) => (r.ok ? r.json() as Promise<EditEvent[]> : [])).then((d) => { if (active) setEdits(d); }).catch(() => {});
+    refresh();
     const timer = setInterval(refresh, 1500);
     return () => { active = false; clearInterval(timer); };
-  }, [selected?.root, selected?.path]);
+  }, []);
   useEffect(() => {  // nothing picked yet: show the first changed file
     if (!selected) { const r = repos.find(x => x.files.length); if (r) onSelect({ root: r.root, path: r.files[0]!.path }); }
   }, [selected, repos]);
-  const stats = parseDiff(diff);
   return <div className="grid min-h-0 gap-3 md:grid-cols-[minmax(12rem,1fr)_minmax(0,3fr)]">
     <Card size="sm"><CardHeader><CardTitle>Changed files</CardTitle></CardHeader><CardContent>
       {repos.map((r) => <div key={r.root} className="mb-3"><p className="mb-1 text-xs font-semibold">{r.name}</p>
@@ -217,7 +257,7 @@ export function DiffView({ repos, selected, onSelect }: { repos: Repo[]; selecte
           onClick={() => onSelect({ root: r.root, path: f.path })}>{f.status} {f.path}</Button>)}</div>)}
       {!repos.some((r) => r.files.length) && <p className="text-xs text-muted-foreground">No changed files.</p>}
     </CardContent></Card>
-    <Card size="sm" className="min-w-0"><CardHeader><CardTitle className="flex flex-wrap items-baseline gap-2"><span className="break-all font-mono text-sm">{selected?.path ?? "Select a file"}</span>{selected && stats.lines.length > 0 && <span className="text-xs font-normal tabular-nums"><span className="text-emerald-400">+{stats.add}</span> <span className="text-red-400">-{stats.del}</span></span>}<span className="text-xs font-normal text-muted-foreground">live vs HEAD</span></CardTitle></CardHeader>
+    <Card size="sm" className="min-w-0"><CardHeader><CardTitle>{selected ? <DiffHeader info={diffInfo(selected.path, diff, edits, selected.root)} now={Date.now()} right="live vs HEAD" /> : "Select a file"}</CardTitle></CardHeader>
       <CardContent>{error && <p role="alert" className="text-destructive">{error}</p>}
         {selected ? <DiffCode raw={diff} /> : <p className="text-xs text-muted-foreground">Choose a changed file to inspect.</p>}
       </CardContent></Card>
