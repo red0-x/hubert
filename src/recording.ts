@@ -1,6 +1,8 @@
 export type VoiceState = "idle" | "starting" | "listening" | "transcribing";
 
 /** Clips shorter than this are almost always an accidental tap, so they are dropped before upload. */
+/** Grace period for a trailing dataavailable after stop. */
+export const LATE_CHUNK_MS = 500;
 export const MIN_RECORDING_MS = 300;
 /** Peak level (see normalizeLevel) below which a clip is treated as silence rather than speech. */
 export const MIN_SPEECH_LEVEL = 0.05;
@@ -166,6 +168,9 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
         // The preview has its own PREVIEW_TIMEOUT_MS cap, so this wait is bounded, never indefinite.
         if (previewInFlight) { try { await previewInFlight; } catch {} }
         if (disposed || id !== generation) return;
+        // WebKitGTK can deliver the final dataavailable after the stop event: give it a moment.
+        for (let waited = 0; waited < LATE_CHUNK_MS && chunks.reduce((n, c) => n + c.size, 0) < 200; waited += 50) await new Promise(res => setTimeout(res, 50));
+        if (disposed || id !== generation) return;
         const blob = new Blob(chunks, { type: type() });
         const ms = endedAt - startedAt;
         if (ms < MIN_RECORDING_MS || blob.size < 200) { update("idle"); onError(`Recording too short, ignored (${ms} ms, ${blob.size} bytes, ${chunks.length} chunks). Hold the mic a little longer.`); return; }
@@ -205,7 +210,7 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
 
   function stop() {
     if (state === "starting") { generation++; update("idle"); }
-    else if (recorder?.state === "recording") { releasing = true; update("transcribing"); recorder.stop(); }
+    else if (recorder?.state === "recording") { releasing = true; update("transcribing"); try { recorder.requestData(); } catch {} recorder.stop(); }
   }
   function cancel() {
     generation++;
