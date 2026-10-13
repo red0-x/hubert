@@ -202,12 +202,14 @@ function codexAgents(now: number): Agent[] {
 /** omp and pi share one JSONL format: header {type:"session",id,cwd} (omp precedes it with a title slot), then message entries. */
 export function piDoing(lines: any[]): string | undefined {
   for (let i = lines.length - 1; i >= 0; i--) {
-    for (const b of [...(lines[i]?.message?.content ?? [])].reverse()) {
-      if (b?.type === "toolCall" || b?.type === "tool_use") {
-        const a = b.arguments ?? b.input ?? {};
-        const what = a.command ?? a.cmd ?? a.path ?? a.file_path ?? a.pattern ?? "";
-        return `${b.name}${what ? ": " + short(what) : ""}`;
-      }
+    const content = lines[i]?.message?.content;
+    if (!Array.isArray(content)) continue; // drift: content may be a string, a single block, or absent
+    for (let k = content.length - 1; k >= 0; k--) {
+      const b = content[k];
+      if (b?.type !== "toolCall" && b?.type !== "tool_use") continue;
+      const a = b.arguments ?? b.input ?? {};
+      const what = a.command ?? a.cmd ?? a.path ?? a.file_path ?? a.pattern ?? "";
+      return `${b.name}${what ? ": " + short(what) : ""}`;
     }
   }
 }
@@ -229,15 +231,20 @@ function piAgents(now: number, source: "omp" | "pi", root: string): Agent[] {
 
 /** OpenCode 1.17+ keeps sessions in SQLite. Older JSON stores are not read. */
 function opencodeAgents(now: number): Agent[] {
-  const db = join(process.env.XDG_DATA_HOME ?? join(HOME, ".local/share"), "opencode", "opencode.db");
-  if (!existsSync(db)) return [];
+  const dir = join(process.env.XDG_DATA_HOME ?? join(HOME, ".local/share"), "opencode");
+  const db = ["opencode.db", "opencode-next.db"].map((f) => join(dir, f)).find(existsSync);
+  if (!db) return [];
   let conn: Database | undefined;
   try {
     conn = new Database(db, { readonly: true });
-    const rows = conn.query("SELECT id, title, directory, parent_id, model, time_updated FROM session WHERE time_archived IS NULL AND time_updated > ? AND parent_id IS NULL ORDER BY time_updated DESC LIMIT 20").all(now - RECENT_MS) as any[];
+    // v2 renamed table `session` to `session_v2`; both expose id/title/directory/parent_id/model/time_updated/time_archived.
+    const has = (name: string) => { try { return !!conn!.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name); } catch { return false; } };
+    const table = ["session_v2", "session"].find(has);
+    if (!table) return [];
+    const rows = conn.query(`SELECT id, title, directory, parent_id, model, time_updated FROM ${table} WHERE time_archived IS NULL AND time_updated > ? AND parent_id IS NULL ORDER BY time_updated DESC LIMIT 20`).all(now - RECENT_MS) as any[];
     return rows.map((r) => {
       let model: string | undefined; try { model = JSON.parse(r.model)?.id; } catch {}
-      return { id: r.id, name: `oc-${basename(r.directory)}-${String(r.id).slice(-4)}`, source: "opencode" as const, cwd: r.directory, repo: null, model, title: r.title,
+      return { id: r.id, name: `oc-${basename(r.directory ?? "")}-${String(r.id).slice(-4)}`, source: "opencode" as const, cwd: r.directory ?? "", repo: null, model, title: r.title,
         state: state(now, r.time_updated), doing: r.title ? short(r.title) : undefined, lastActive: r.time_updated };
     });
   } catch { return []; } finally { conn?.close(); }

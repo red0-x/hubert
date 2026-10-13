@@ -86,24 +86,30 @@ function codexRollouts(dir: string): string[] {
     }
   };
   walk(dir, 3);
-  return files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  const mtime = (p: string) => { try { return statSync(p).mtimeMs; } catch { return 0; }; };
+  return files.sort((a, b) => mtime(b) - mtime(a));
 }
 
 /** Codex records applied patches as event_msg/patch_apply_end with absolute paths and a success flag. Edits made through shell commands are not seen. */
 export function codexEdits(repos: { root: string }[], dir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions")): EditEvent[] {
   const out: EditEvent[] = [];
   for (const path of codexRollouts(dir).slice(0, 8)) {
-    let cwd = "";
-    for (const row of cachedTailLines(path, TAIL_BYTES)) {
-      if (row.type === "turn_context") cwd = row.payload?.cwd ?? cwd;
-      if (row.type !== "event_msg" || row.payload?.type !== "patch_apply_end" || row.payload.success !== true) continue;
-      const agent = `cx-${basename(cwd || "codex")}-${basename(path, ".jsonl").slice(-36, -32)}`;
-      for (const file of Object.keys(row.payload.changes ?? {})) {
-        const absolute = resolve(cwd, file);
-        const repo = repos.find((r) => absolute.startsWith(r.root + sep));
-        if (repo) out.push({ agent, root: repo.root, path: relative(repo.root, absolute), ts: Date.parse(row.timestamp ?? "") || statSync(path).mtimeMs });
+    try {
+      const fallback = statSync(path).mtimeMs;
+      let cwd = "";
+      for (const row of cachedTailLines(path, TAIL_BYTES)) {
+        if (row.type === "turn_context") cwd = row.payload?.cwd ?? cwd;
+        if (row.type !== "event_msg" || row.payload?.type !== "patch_apply_end" || row.payload.success !== true) continue;
+        const agent = `cx-${basename(cwd || "codex")}-${basename(path, ".jsonl").slice(-36, -32)}`;
+        const changes = row.payload.changes;
+        if (!changes || typeof changes !== "object") continue;
+        for (const file of Object.keys(changes)) {
+          const absolute = resolve(cwd, file);
+          const repo = repos.find((r) => absolute.startsWith(r.root + sep));
+          if (repo) out.push({ agent, root: repo.root, path: relative(repo.root, absolute), ts: Date.parse(row.timestamp ?? "") || fallback });
+        }
       }
-    }
+    } catch {} // Rollouts rotate or carry malformed lines; one bad row must not drop the rest.
   }
   return out;
 }

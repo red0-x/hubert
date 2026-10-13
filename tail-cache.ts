@@ -1,11 +1,23 @@
 import { closeSync, openSync, readSync, statSync } from "fs";
 
-/** Parse JSONL; a tail read may start mid-line, so malformed lines are skipped. */
+// A single line larger than this is skipped: every transcript we read uses object-per-line, and a
+// multi-megabyte line is base64 media or a truncated fragment, never a record we index.
+const MAX_LINE = 8 * 1024 * 1024;
+
+/**
+ * Parse JSONL; a tail read may start mid-line, so malformed lines are skipped.
+ * Only non-null objects are returned: a line like `null`, `42`, `"x"` or `[..]` parses fine but is
+ * not a session record, and letting it through would make callers' `row.meta` / `row.type` access
+ * throw and take down the whole poll. Unknown shapes are dropped, never surfaced.
+ */
 export function jsonLines(text: string): any[] {
   const out: any[] = [];
+  if (typeof text !== "string") return out;
   for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch {}
+    if (line.length > MAX_LINE || !line.trim()) continue;
+    let value: unknown;
+    try { value = JSON.parse(line); } catch { continue; }
+    if (value && typeof value === "object" && !Array.isArray(value)) out.push(value);
   }
   return out;
 }
@@ -20,7 +32,9 @@ const MAX_ENTRIES = 128;
 function readTail(path: string, bytes: number, size: number): string {
   const length = Math.min(size, bytes);
   if (length === 0) return "";
-  const fd = openSync(path, "r");
+  let fd: number;
+  // The file can be unlinked or replaced between the caller's stat and this open (journals rotate).
+  try { fd = openSync(path, "r"); } catch { return ""; }
   try {
     const buffer = Buffer.alloc(length);
     readSync(fd, buffer, 0, length, size - length);
