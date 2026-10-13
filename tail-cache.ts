@@ -40,7 +40,8 @@ function readTail(path: string, bytes: number, size: number): string {
     readSync(fd, buffer, 0, length, size - length);
     const text = buffer.toString("utf8");
     return size > length ? text.slice(text.indexOf("\n") + 1) : text;
-  } finally { closeSync(fd); }
+  } catch { return ""; } // unreadable between the caller's stat and this read
+  finally { closeSync(fd); }
 }
 
 /**

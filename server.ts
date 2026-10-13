@@ -253,7 +253,10 @@ if (import.meta.main) {
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: PORT,
-    development: process.env.NODE_ENV !== "production",
+    // No prebuilt client means we are on Bun's HTMLBundle route, which only bundles pages while
+    // development is on. Leaving it off after a failed production prebuild served an empty 200,
+    // so a broken source showed up as a blank window instead of Bun's error page.
+    development: !client,
     routes,
   });
   console.log(`hubert on ${server.url}`);

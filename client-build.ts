@@ -10,9 +10,12 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-/** Directories and files whose contents can change the client bundle. */
+/** Directories, and root-level modules, whose contents can change the client bundle. */
 const INPUT_DIRS = ["src", "voice"];
 const INPUT_FILES = ["package.json", "bun.lock", "bunfig.toml", "tsconfig.json"];
+// The client imports root modules as well (src/alerts.ts pulls ../command-stats), so their edits
+// have to change the key too. Without this the disk cache keeps serving the previous client.
+const ROOT_SOURCE = /\.(ts|tsx|json)$/;
 const BASE = "/_client/";
 
 /** Absolute paths of every file that can change the bundle. */
@@ -22,6 +25,10 @@ export function clientSources(root: string): string[] {
     const p = join(root, f);
     if (existsSync(p)) out.push(p);
   }
+  try {
+    for (const e of readdirSync(root, { withFileTypes: true }))
+      if (e.isFile() && ROOT_SOURCE.test(e.name) && !/\.test\.tsx?$/.test(e.name)) out.push(join(root, e.name));
+  } catch {} // an unreadable root just means fewer inputs, never a failed startup
   const walk = (dir: string) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
@@ -40,7 +47,7 @@ export function clientSources(root: string): string[] {
 export function bundleKey(root: string, files: string[] = clientSources(root), bun = Bun.version): string {
   const h = createHash("sha256");
   for (const f of files) {
-    const s = statSync(f);
+    let s; try { s = statSync(f); } catch { continue; } // a file that vanished mid-scan adds nothing
     h.update(`${relative(root, f)}:${s.mtimeMs}:${s.size}\n`);
   }
   return h.update(`bun:${bun}\n`).digest("hex").slice(0, 16);
@@ -65,6 +72,14 @@ export type Client = {
   index: () => Response;
   asset: (pathname: string) => Response;
 };
+
+type BuildError = { message?: string; position?: { file?: string; line?: number } };
+
+/** " (src/app.tsx:134)" for a build error that knows where it is, else "". */
+function where(err: BuildError): string {
+  const { file, line } = err.position ?? {};
+  return file ? ` (${file}${line ? `:${line}` : ""})` : "";
+}
 
 async function build(root: string, dir: string): Promise<boolean> {
   const out = await Bun.build({
@@ -102,6 +117,9 @@ export async function ensureClientBundle(root = import.meta.dir, onWarn = consol
       built = true;
       onWarn(`[hubert] client bundle built in ${Math.round(performance.now() - t0)} ms -> ${dir}`);
     } catch (e) {
+      // Bun.build rejects with an AggregateError whose message is only "Bundle failed"; the real
+      // diagnostics live in .errors. Without them a failed build is a blank window and a useless log.
+      for (const err of (e as { errors?: BuildError[] }).errors ?? []) onWarn(`[hubert] client build: ${err?.message ?? String(err)}${where(err)}`);
       onWarn(`[hubert] client build failed, using the dev server: ${(e as Error).message}`);
       return null;
     }
