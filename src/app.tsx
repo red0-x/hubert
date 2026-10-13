@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BotIcon, GitBranchIcon, GitCompareIcon, MicIcon, SettingsIcon, TerminalIcon } from "lucide-react";
+import { BotIcon, GitBranchIcon, GitCompareIcon, SettingsIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
 import type { Agent, Repo } from "../state";
-import { useVoice } from "./use-voice";
+import type { VoiceState } from "./use-voice";
 import type { ViewDirective } from "../voice/intent";
-import { speak } from "./speech";
+import { VoicePanel, runAction, type VoiceSignal } from "./voice-panel";
 import { MascotCharacter, mascotState } from "./mascot";
 import { SettingsWindow, usePreferences } from "./settings";
 import { ChangeMap, CommandsView, DiffView } from "./live-view";
@@ -23,41 +23,6 @@ import { Toaster } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type State = { now: number; agents: Agent[]; repos: Repo[] };
-
-type PlanAction = { type: string; agent?: string; text?: string; address?: string; x?: number; y?: number; width?: number; height?: number; targetTitle?: string; needsConfirm: boolean };
-const label = (a: PlanAction) =>
-  a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "move" ? `Move ${a.targetTitle ?? a.address} (${a.address}) to ${a.x}, ${a.y}` : a.type === "resize" ? `Resize ${a.targetTitle ?? a.address} (${a.address}) to ${a.width} × ${a.height}` : a.type === "focus" ? `Focus ${a.agent}` : a.type === "stop" ? `Interrupt ${a.agent}` : `Status of ${a.agent}`;
-
-async function runAction(a: PlanAction, confirmed: boolean, speakReplies = false) {
-  const { needsConfirm, ...action } = a;
-  const r = await fetch("/api/execute", { method: "POST", body: JSON.stringify({ action, confirmed }) }).catch(() => null);
-  if (!r) return toast.error("hubert server is not reachable");
-  const body = await r.text();
-  if (!r.ok) return toast.error(body);
-  const result = (JSON.parse(body) as { result: string }).result;
-  if (speakReplies) speak(result);
-  toast.success(result);
-}
-
-/** Transcript -> plan (grammar first, light model otherwise). Mutations wait for a click. */
-async function handleSpeech(text: string, connector: string, on?: (event: "start" | "done" | "error") => void, speakReplies = false, onView?: (v: ViewDirective) => void) {
-  const id = toast.loading(`“${text}”`, { description: "Thinking…" });
-  on?.("start");
-  const r = await fetch("/api/voice", { method: "POST", body: JSON.stringify({ text }) }).catch(() => null);
-  if (!r?.ok) { on?.("error"); return toast.error(r ? await r.text() : "hubert server is not reachable", { id }); }
-  const plan = (await r.json()) as { say: string; actions: PlanAction[]; dropped: string[]; via: string; view?: ViewDirective };
-  toast.dismiss(id);
-  on?.("done");
-  const desc = `${plan.via === "grammar" ? "" : `${plan.via} \u00b7 `}${connector}`;
-  if (speakReplies && plan.say) speak(plan.say);
-  if (plan.view) onView?.(plan.view); // view switches are applied in the window, never sent to the server
-  if (!plan.actions.length) return toast(plan.say || "No matching command", { description: `“${text}” \u00b7 ${desc}` });
-  for (const a of plan.actions) {
-    if (!a.needsConfirm) await runAction(a, false, speakReplies);
-    else toast(label(a), { description: `${plan.say} \u00b7 ${desc}`, duration: 15000, action: { label: "Do it", onClick: () => void runAction(a, true, speakReplies) }, cancel: { label: "Cancel", onClick: () => {} } });
-  }
-  for (const d of plan.dropped) toast.warning(`Ignored: ${d}`);
-}
 
 const ago = (now: number, t: number) => {
   const s = Math.max(0, Math.round((now - t) / 1000));
@@ -173,6 +138,8 @@ function App() {
   const [thinking, setThinking] = useState(false);
   const [answeredAt, setAnsweredAt] = useState(0);
   const [voiceError, setVoiceError] = useState(false);
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [connector, setConnector] = useState<string | null>(null);
   // Voice view switches run here in the window: no server action, no confirmation.
   const applyView = useCallback((v: ViewDirective) => {
     if (v.failuresOnly !== undefined) setShowFailures(v.failuresOnly);
@@ -183,33 +150,14 @@ function App() {
       setView(v.panel ?? (r && f ? "diff" : "map"));
     } else if (v.panel) setView(v.panel);
   }, [s]);
-  const voice = useVoice(
-    useCallback((text: string, connector: string) => void handleSpeech(text, connector, (event) => {
-      if (event === "start") { setVoiceError(false); setThinking(true); }
-      else if (event === "done") { setThinking(false); setAnsweredAt(Date.now()); }
-      else { setThinking(false); setVoiceError(true); }
-    }, prefs.speakReplies, applyView), [prefs.speakReplies, applyView]),
-    useCallback((msg: string) => { setVoiceError(true); toast.error(msg); }, []),
-  );
-
-  // In-app shortcut: only while Hubert is focused and not typing in a field or pressing a button.
-  const { start, stop, cancel, state: voiceState } = voice;
-  const canRecord = !!voice.stt?.active;
-  useEffect(() => {
-    if (settingsOpen) { cancel(); return; }
-    if (!canRecord) return;
-    const typing = (e: KeyboardEvent) => e.target instanceof HTMLElement && !!e.target.closest("input,textarea,select,button,[contenteditable]");
-    const down = (e: KeyboardEvent) => {
-      if (e.code === "Escape") return cancel();
-      if (e.code !== prefs.shortcut || e.repeat || e.ctrlKey || e.altKey || e.metaKey || typing(e)) return;
-      e.preventDefault();
-      if (prefs.voiceMode === "hold") start();
-      else if (voiceState === "listening") stop(); else start();
-    };
-    const up = (e: KeyboardEvent) => { if (prefs.voiceMode === "hold" && e.code === prefs.shortcut) stop(); };
-    addEventListener("keydown", down); addEventListener("keyup", up);
-    return () => { removeEventListener("keydown", down); removeEventListener("keyup", up); };
-  }, [settingsOpen, canRecord, prefs.shortcut, prefs.voiceMode, voiceState, start, stop, cancel]);
+  // The voice panel owns the recorder and its shortcut; these signals drive the mascot and settings.
+  const onVoiceSignal = useCallback((signal: VoiceSignal) => {
+    if (signal.kind === "recorder") setVoiceState(signal.state);
+    else if (signal.kind === "connector") setConnector(signal.connector);
+    else if (signal.kind === "start") { setVoiceError(false); setThinking(true); }
+    else if (signal.kind === "done") { setThinking(false); setAnsweredAt(signal.at); }
+    else { setThinking(false); setVoiceError(true); }
+  }, []);
 
   useEffect(() => {
     let on = true;
@@ -238,8 +186,6 @@ function App() {
   const roots = visible.filter((a) => !a.parent || !ids.has(a.parent));
   const kids = (id: string) => visible.filter((a) => a.parent === id);
   const working = s.agents.filter((a) => a.state === "working").length;
-  const micOff = !voice.stt?.active;
-  const micTip = voice.stt?.active ? `${prefs.voiceMode === "hold" ? "Hold" : "Click"} to talk (${voice.stt.active})` : "No speech-to-text connector configured, see README";
   const mascot = mascotState({ stale, error: voiceError, voice: voiceState, thinking, answeredAt, now: Date.now() });
 
   return (
@@ -251,25 +197,6 @@ function App() {
         {stale && <Badge variant="destructive">stale</Badge>}
         <div className="ml-auto flex items-center gap-2">
           <MascotCharacter state={mascot} />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button
-                  size="icon"
-                  variant={voice.state === "listening" ? "default" : "outline"}
-                  disabled={micOff || voice.state === "transcribing"}
-                  aria-label={prefs.voiceMode === "hold" ? "Hold to talk" : "Toggle to talk"}
-                  onPointerDown={prefs.voiceMode === "hold" ? voice.start : undefined}
-                  onPointerUp={prefs.voiceMode === "hold" ? voice.stop : undefined}
-                  onPointerLeave={prefs.voiceMode === "hold" ? voice.stop : undefined}
-                  onClick={prefs.voiceMode === "toggle" ? () => (voice.state === "listening" ? voice.stop() : voice.start()) : undefined}
-                >
-                  {voice.state === "transcribing" ? <Spinner /> : <MicIcon className={voice.state === "listening" ? "animate-pulse" : ""} />}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{micTip}</TooltipContent>
-          </Tooltip>
           <Button size="icon" variant="ghost" aria-label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></Button>
           <Switch id="closed" size="sm" checked={showClosed} onCheckedChange={setShowClosed} />
           <Label htmlFor="closed" className="text-xs text-muted-foreground">
@@ -277,6 +204,8 @@ function App() {
           </Label>
         </div>
       </header>
+      <Separator />
+      <VoicePanel preferences={prefs} paused={settingsOpen} onSignal={onVoiceSignal} applyView={applyView} onOpenSettings={() => setSettingsOpen(true)} />
       <Separator />
       <nav aria-label="Hubert panels" className="flex gap-1 px-4 py-2">
         {(["agents", "map", "commands", "diff"] as const).map((tab) =>
@@ -327,7 +256,7 @@ function App() {
           </>}
         </div>
       </ScrollArea>
-      <SettingsWindow open={settingsOpen} onClose={() => setSettingsOpen(false)} preferences={prefs} onChange={setPrefs} connector={voice.stt?.active ?? null} />
+      <SettingsWindow open={settingsOpen} onClose={() => setSettingsOpen(false)} preferences={prefs} onChange={setPrefs} connector={connector} />
       <Toaster />
     </div>
   );

@@ -1,7 +1,49 @@
 export type VoiceState = "idle" | "starting" | "listening" | "transcribing";
 
+/** RMS of 8-bit time-domain samples mapped to a rough 0..1 meter. Boosted so normal speech fills it. */
+export function normalizeLevel(samples: Uint8Array): number {
+  if (!samples.length) return 0;
+  let sum = 0;
+  for (const s of samples) { const v = (s - 128) / 128; sum += v * v; }
+  return Math.min(1, Math.sqrt(sum / samples.length) * 3);
+}
+
+type AudioCtor = new () => AudioContext;
+
+/** Cosmetic level meter: never allowed to break recording. Returns a cleanup function. */
+function attachLevelMeter(stream: MediaStream, onLevel?: (level: number) => void): () => void {
+  if (!onLevel) return () => {};
+  const g = globalThis as { AudioContext?: AudioCtor; webkitAudioContext?: AudioCtor };
+  const Ctx = g.AudioContext ?? g.webkitAudioContext;
+  if (!Ctx || typeof requestAnimationFrame !== "function") return () => {};
+  let context: AudioContext | null = null;
+  let frame = 0;
+  try {
+    context = new Ctx();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 256;
+    context.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    const tick = () => {
+      analyser.getByteTimeDomainData(samples);
+      onLevel(normalizeLevel(samples));
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+  } catch {
+    void context?.close().catch(() => {});
+    onLevel(0);
+    return () => {};
+  }
+  return () => {
+    if (frame) cancelAnimationFrame(frame);
+    try { void context?.close(); } catch {}
+    onLevel(0);
+  };
+}
+
 /** Own microphone lifetime independently of pointer/key gestures and React rerenders. */
-export function createVoiceRecorder(onState: (state: VoiceState) => void, onText: (text: string, connector: string) => void, onError: (message: string) => void) {
+export function createVoiceRecorder(onState: (state: VoiceState) => void, onText: (text: string, connector: string) => void, onError: (message: string) => void, onLevel?: (level: number) => void) {
   let state: VoiceState = "idle";
   let generation = 0;
   let disposed = false;
@@ -19,7 +61,8 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       let released = false;
-      release = () => { if (!released) { released = true; stream.getTracks().forEach(t => t.stop()); } };
+      let stopLevel = () => {};
+      release = () => { if (!released) { released = true; stopLevel(); stream.getTracks().forEach(t => t.stop()); } };
       if (disposed || id !== generation) { release(); return; }
       releaseActive = release;
       const r = new MediaRecorder(stream);
@@ -50,6 +93,7 @@ export function createVoiceRecorder(onState: (state: VoiceState) => void, onText
       };
       recorder = r;
       r.start();
+      stopLevel = attachLevelMeter(stream, onLevel);
       update("listening");
     } catch (error) {
       release?.();

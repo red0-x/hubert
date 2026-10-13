@@ -6,6 +6,7 @@ type Stt = { active: string | null; connectors: { id: string; label: string; kin
 
 export function useVoice(onText: (text: string, connector: string) => void, onError: (msg: string) => void) {
   const [state, setState] = useState<VoiceState>("idle");
+  const [level, setLevel] = useState(0);
   const [stt, setStt] = useState<Stt | null>(null);
   const recorder = useRef<ReturnType<typeof createVoiceRecorder> | null>(null);
   const pttActive = useRef(false);
@@ -14,7 +15,7 @@ export function useVoice(onText: (text: string, connector: string) => void, onEr
 
   useEffect(() => {
     let active = true;
-    recorder.current = createVoiceRecorder(setState, (text, connector) => callbacks.current.onText(text, connector), message => callbacks.current.onError(message));
+    recorder.current = createVoiceRecorder(setState, (text, connector) => callbacks.current.onText(text, connector), message => callbacks.current.onError(message), setLevel);
     fetch("/api/stt").then(r => r.json() as Promise<Stt>).then(data => { if (active) setStt(data); }).catch(() => {});
     // Global hotkey: the server owns start/stop so it works while the window is not focused.
     const events = new EventSource("/api/ptt/events");
@@ -39,5 +40,5 @@ export function useVoice(onText: (text: string, connector: string) => void, onEr
   const start = useCallback(() => { void recorder.current?.start(); }, []);
   const stop = useCallback(() => recorder.current?.stop(), []);
   const cancel = useCallback(() => recorder.current?.cancel(), []);
-  return { state, stt, start, stop, cancel };
+  return { state, level, stt, start, stop, cancel };
 }

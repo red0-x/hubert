@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { createVoiceRecorder } from "./recording";
+import { createVoiceRecorder, normalizeLevel } from "./recording";
+
+test("normalizeLevel keeps silence at 0 and clamps loud input to 1", () => {
+  expect(normalizeLevel(new Uint8Array(0))).toBe(0);
+  expect(normalizeLevel(new Uint8Array([128, 128, 128, 128]))).toBe(0);
+  expect(normalizeLevel(new Uint8Array([0, 255, 0, 255]))).toBe(1);
+  const mid = normalizeLevel(new Uint8Array([160, 96, 160, 96]));
+  expect(mid).toBeGreaterThan(0);
+  expect(mid).toBeLessThan(1);
+});
 
 const originals = { navigator: globalThis.navigator, MediaRecorder: globalThis.MediaRecorder, fetch: globalThis.fetch };
 let stopped = 0;
