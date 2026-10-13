@@ -1,14 +1,16 @@
-import { closeSync, openSync, readSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "path";
+import { cachedTailLines } from "./tail-cache";
 
 export type Command = {
   agent: string;
-  source: "jcode" | "claude";
-  tool: "bash" | "Bash";
+  source: "jcode" | "claude" | "codex";
+  tool: "bash" | "Bash" | "exec";
   command: string;
   intent?: string;
-  ok: boolean;
+  // Undefined when the transcript gives no real evidence either way (see codexCommands).
+  ok?: boolean;
   error?: string;
   duration_ms?: number;
   ts: number;
@@ -33,9 +35,7 @@ export function editEvents(repos: { root: string }[],
         cwd = meta.working_dir ?? "";
         agent = meta.short_name ?? agent;
       }
-      for (const line of tail(path).split("\n")) {
-        let row: any;
-        try { row = JSON.parse(line); } catch { continue; }
+      for (const row of cachedTailLines(path, TAIL_BYTES)) {
         cwd = row.meta?.working_dir ?? row.cwd ?? cwd;
         if (source === "jcode") agent = row.meta?.short_name ?? agent;
         else if (cwd) agent = `cc-${basename(cwd)}-${basename(path).slice(0, 4)}`;
@@ -64,9 +64,8 @@ export function editEvents(repos: { root: string }[],
   return events.sort((x, y) => x.ts - y.ts).slice(-500);
 }
 
-/** Codex records applied patches as event_msg/patch_apply_end with absolute paths and a success flag. Edits made through shell commands are not seen. */
-export function codexEdits(repos: { root: string }[], dir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions")): EditEvent[] {
-  const out: EditEvent[] = [];
+/** Recent Codex rollout files, newest first. Layout is sessions/YYYY/MM/DD/rollout-*.jsonl. */
+function codexRollouts(dir: string): string[] {
   const files: string[] = [];
   const walk = (d: string, depth: number) => {
     let names: string[]; try { names = readdirSync(d); } catch { return; }
@@ -79,10 +78,15 @@ export function codexEdits(repos: { root: string }[], dir = join(process.env.COD
     }
   };
   walk(dir, 3);
-  for (const path of files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs).slice(0, 8)) {
+  return files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+}
+
+/** Codex records applied patches as event_msg/patch_apply_end with absolute paths and a success flag. Edits made through shell commands are not seen. */
+export function codexEdits(repos: { root: string }[], dir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions")): EditEvent[] {
+  const out: EditEvent[] = [];
+  for (const path of codexRollouts(dir).slice(0, 8)) {
     let cwd = "";
-    for (const line of tail(path).split("\n")) {
-      let row: any; try { row = JSON.parse(line); } catch { continue; }
+    for (const row of cachedTailLines(path, TAIL_BYTES)) {
       if (row.type === "turn_context") cwd = row.payload?.cwd ?? cwd;
       if (row.type !== "event_msg" || row.payload?.type !== "patch_apply_end" || row.payload.success !== true) continue;
       const agent = `cx-${basename(cwd || "codex")}-${basename(path, ".jsonl").slice(-36, -32)}`;
@@ -96,20 +100,59 @@ export function codexEdits(repos: { root: string }[], dir = join(process.env.COD
   return out;
 }
 
+/**
+ * Recent shell commands from Codex rollouts. The exec tool runs a JS cell whose recorded output is
+ * prefixed with "Script completed|Script error|Script running with cell ID" plus a wall-time line.
+ * That prefix is the only completion evidence in the transcript: a "Script error" cell is a real
+ * failure, but "Script completed" only proves the cell finished, not the shell exit code, so ok stays
+ * undefined unless the cell errored. Commands run through the async `wait` flow are not paired back.
+ */
+export function codexCommands(dir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions")): Command[] {
+  const out: Command[] = [];
+  for (const path of codexRollouts(dir).slice(0, 8)) {
+    try {
+      const fallback = statSync(path).mtimeMs;
+      const stem = basename(path, ".jsonl").slice(-36, -32);
+      let cwd = "";
+      const pending = new Map<string, Command>();
+      for (const row of cachedTailLines(path, TAIL_BYTES)) {
+        if (row.type === "turn_context") { cwd = row.payload?.cwd ?? cwd; continue; }
+        const p = row.type === "response_item" ? row.payload : null;
+        if (!p || typeof p.call_id !== "string") continue;
+        const ts = Date.parse(row.timestamp ?? "") || fallback;
+        if (p.type === "custom_tool_call" && p.name === "exec") {
+          const command = execCommand(p.input);
+          if (command) pending.set(p.call_id, { agent: `cx-${basename(cwd || "codex")}-${stem}`, source: "codex", tool: "exec", command, ts });
+        } else if (p.type === "custom_tool_call_output") {
+          const call = pending.get(p.call_id);
+          if (!call) continue;
+          pending.delete(p.call_id);
+          const raw = typeof p.output === "string" ? p.output : Array.isArray(p.output) ? p.output.map((o: any) => o.text ?? "").join("") : "";
+          const seconds = /Wall time ([\d.]+) seconds/.exec(raw);
+          if (seconds) call.duration_ms = Math.round(parseFloat(seconds[1]!) * 1000);
+          if (/^Script error:/.test(raw)) {
+            call.ok = false;
+            call.error = raw.replace(/^[^\n]*\nWall time [\d.]+ seconds\n(?:Output:\n)?/, "").slice(0, 1000);
+          }
+          out.push(call);
+        }
+      }
+    } catch {} // Rollouts may rotate or be malformed.
+  }
+  return out;
+}
+
+/** Codex passes the shell command inside a JS cell as JSON: tools.exec_command({"cmd":"...", ...}). */
+function execCommand(input: unknown): string | undefined {
+  if (typeof input !== "string") return undefined;
+  const match = /"cmd"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(input);
+  if (!match) return undefined;
+  try { const cmd: unknown = JSON.parse(match[1]!); return typeof cmd === "string" && cmd.trim() ? cmd : undefined; } catch { return undefined; }
+}
+
+
 const RECENT_MS = 30 * 60_000;
 const TAIL_BYTES = 256 * 1024;
-
-function tail(path: string): string {
-  const fd = openSync(path, "r");
-  try {
-    const size = statSync(path).size;
-    const length = Math.min(size, TAIL_BYTES);
-    const buffer = Buffer.alloc(length);
-    readSync(fd, buffer, 0, length, size - length);
-    const text = buffer.toString("utf8");
-    return size > length ? text.slice(text.indexOf("\n") + 1) : text;
-  } finally { closeSync(fd); }
-}
 
 function recentFiles(dir: string, suffix: string): string[] {
   try {
@@ -123,6 +166,7 @@ function recentFiles(dir: string, suffix: string): string[] {
 export function recentCommands(
   jcodeDir = join(process.env.JCODE_HOME ?? join(homedir(), ".jcode"), "sessions"),
   claudeDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects"),
+  codexDir = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions"),
 ): Command[] {
   const files: { path: string; source: Command["source"] }[] = recentFiles(jcodeDir, ".journal.jsonl").map(path => ({ path, source: "jcode" }));
   try {
@@ -139,9 +183,7 @@ export function recentCommands(
       if (source === "jcode") {
         try { agent = JSON.parse(readFileSync(path.replace(/\.journal\.jsonl$/, ".json"), "utf8")).short_name ?? agent; } catch {}
       }
-      for (const line of tail(path).split("\n")) {
-        let event: any;
-        try { event = JSON.parse(line); } catch { continue; }
+      for (const event of cachedTailLines(path, TAIL_BYTES)) {
         if (source === "jcode") agent = event.meta?.short_name ?? agent;
         else if (event.cwd) agent = `cc-${basename(event.cwd)}-${basename(path).slice(0, 4)}`;
         const messages = source === "jcode" ? event.append_messages ?? [] : [event.message];
@@ -166,6 +208,7 @@ export function recentCommands(
       }
     } catch {} // Journals may disappear while sessions rotate.
   }
+  results.push(...codexCommands(codexDir));
   return results.sort((a, b) => b.ts - a.ts).slice(0, 50);
 }
 

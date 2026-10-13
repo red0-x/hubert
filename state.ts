@@ -2,6 +2,9 @@ import { readdirSync, statSync, openSync, readSync, closeSync, readFileSync, exi
 import { Database } from "bun:sqlite";
 import { homedir } from "os";
 import { join, basename } from "path";
+import { cachedTailLines, jsonLines } from "./tail-cache";
+
+export { jsonLines }; // re-exported so state.test.ts keeps importing it from here
 
 const HOME = homedir();
 const JCODE_SESSIONS = join(process.env.JCODE_HOME ?? join(HOME, ".jcode"), "sessions");
@@ -28,29 +31,6 @@ export type Agent = {
 
 export type FileChange = { path: string; status: string; add: number; del: number };
 export type Repo = { root: string; name: string; branch: string; files: FileChange[]; agents: string[] };
-
-function tail(path: string, bytes = TAIL_BYTES): string {
-  const fd = openSync(path, "r");
-  try {
-    const size = statSync(path).size;
-    const len = Math.min(size, bytes);
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    return buf.toString("utf8");
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/** Parse the tail of a JSONL file; first line may be partial so bad lines are skipped. */
-export function jsonLines(text: string): any[] {
-  const out: any[] = [];
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch {}
-  }
-  return out;
-}
 
 /** Last tool_use in a list of messages-with-content, as a short human string. */
 export function lastTool(contents: any[][]): string | undefined {
@@ -99,7 +79,7 @@ function jcodeAgents(now: number): Agent[] {
     const base = jcodeMeta(join(JCODE_SESSIONS, id + ".json"));
     // ponytail: skips any session untouched for 30min unless meta says Active; 194 files stat is cheap
     if (now - mtime > RECENT_MS && base.status !== "Active") continue;
-    const lines = jsonLines(tail(journal));
+    const lines = cachedTailLines(journal, TAIL_BYTES);
     const meta = { ...base, ...(lines.findLast((l) => l.meta)?.meta ?? {}) };
     const status = meta.status;
     if (typeof meta.title === "string" && meta.title.startsWith(BRAIN_MARK)) continue;
@@ -137,7 +117,7 @@ function claudeAgents(now: number): Agent[] {
       const p = join(CLAUDE_PROJECTS, d, f);
       const mtime = statSync(p).mtimeMs;
       if (now - mtime > RECENT_MS) continue;
-      const lines = jsonLines(tail(p));
+      const lines = cachedTailLines(p, TAIL_BYTES);
       const cwd = lines.findLast((l) => l.cwd)?.cwd;
       if (!cwd) continue;
       const id = f.slice(0, -6);
@@ -207,7 +187,7 @@ function codexAgents(now: number): Agent[] {
   const agents: Agent[] = [];
   for (const { path, mtime } of files) {
     try {
-      const lines = jsonLines(tail(path));
+      const lines = cachedTailLines(path, TAIL_BYTES);
       const meta = jsonLines(head(path).split("\n")[0] ?? "")[0]?.payload;
       const cwd: string = lines.findLast((l) => l.type === "turn_context")?.payload?.cwd ?? meta?.cwd ?? "";
       const id: string = meta?.id ?? /([0-9a-f-]{36})\.jsonl$/.exec(path)?.[1] ?? basename(path);
@@ -238,7 +218,7 @@ function piAgents(now: number, source: "omp" | "pi", root: string): Agent[] {
     try {
       const header = jsonLines(head(path, 8192)).find((l) => l.type === "session");
       if (!header?.cwd || header.parentSession) continue; // subagent runs would flood the list
-      const lines = jsonLines(tail(path));
+      const lines = cachedTailLines(path, TAIL_BYTES);
       const id: string = header.id ?? basename(path, ".jsonl");
       agents.push({ id, name: `${source}-${basename(header.cwd)}-${id.slice(0, 4)}`, source, cwd: header.cwd, repo: null,
         model: lines.findLast((l) => l.message?.model)?.message.model, state: state(now, mtime), doing: piDoing(lines), lastActive: mtime });
@@ -287,7 +267,7 @@ function cursorAgents(now: number): Agent[] {
     if (rel[1] !== "agent-transcripts" || rel.includes("subagents")) continue;
     const cwd = resolveSlug(rel[0]!); if (!cwd) continue;
     try {
-      const lines = jsonLines(tail(path));
+      const lines = cachedTailLines(path, TAIL_BYTES);
       const id = basename(path, ".jsonl");
       agents.push({ id, name: `cur-${basename(cwd)}-${id.slice(0, 4)}`, source: "cursor", cwd, repo: null, state: state(now, mtime),
         doing: lastTool(lines.map((l) => l.message?.content)), lastActive: mtime });
