@@ -3,6 +3,15 @@
 #   HUBERT_PORT     port (default 7777)
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
+# Launchers (rofi, .desktop) start with a minimal PATH.
+export PATH="$HOME/.bun/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+# Without a terminal, surface errors as a notification and in the log.
+if [ ! -t 2 ] && [ "${1:-}" != "ptt" ]; then
+  ERRLOG="${XDG_STATE_HOME:-$HOME/.local/state}/hubert-launch.log"
+  mkdir -p "$(dirname "$ERRLOG")"
+  exec 2>"$ERRLOG"
+  trap 'rc=$?; [ $rc -ne 0 ] && command -v notify-send >/dev/null && notify-send "Hubert failed to start" "$(tail -n 3 "$ERRLOG")"' EXIT
+fi
 PORT="${HUBERT_PORT:-7777}"
 URL="http://127.0.0.1:$PORT"
 up() { curl -fs "$URL/api/state" >/dev/null 2>&1; }
