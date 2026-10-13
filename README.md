@@ -68,8 +68,8 @@ Interrupting needs the jcode harness bridge. `hubert.sh` starts `jcode api-bridg
 
 Hold the mic button (or your shortcut) and speak. Simple requests such as focusing an agent or asking for status use a fast grammar. Anything else goes to **DeepSeek Flash through jcode**, without model tools: it proposes a short plan, which Hubert checks against live agents and windows before running it. `HUBERT_BRAIN_MODEL` and `HUBERT_BRAIN_PROVIDER` still override the default. If the DeepSeek route is unavailable, Hubert reports that rather than silently choosing another paid model.
 
-- Focus and status run immediately. Sending a message, interrupting an agent, and moving or resizing a window need a click on **Do it**.
-- Hubert does **not** open or close windows or agents by voice. Hyprland arrangement is limited to validated move and resize.
+- Focus and status run immediately. Sending a message and interrupting an agent need a click on **Do it**. Moving, resizing and sending windows to another workspace run immediately.
+- Hubert does **not** open or close windows or agents by voice. Hyprland arrangement is limited to validated move, resize and send-to-workspace, and those run without a confirm click (addresses are checked against live windows, bounds are enforced).
 - While you hold the mic, a provisional draft of your words appears (local connectors only, never billed cloud STT). It is display-only. The final transcript on release is the only thing that acts.
 - Spoken replies: WebKitGTK has no speech synthesis, so Hubert speaks through the local server. Run `./tts-setup.sh` once to install local neural voices. Kokoro (92 MB, default blend `af_heart:af_bella`, override with `HUBERT_TTS_KOKORO`, e.g. `af_sky`) is preferred, then Piper (`HUBERT_TTS_VOICE`), then the robotic `espeak-ng`. There is no pretrained anime-girl voice model to drop in. A true anime voice would need a voice clone trained on licensed audio. Pitch (default 1.5) lifts the voice. Settings lists your PipeWire speakers and microphones: the speaker is used per reply, the microphone sets the system default input (`pactl`).
 - Choose a speech-to-text connector with `HUBERT_STT`:

@@ -11,10 +11,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
-export type PlanAction = { type: string; agent?: string; text?: string; address?: string; x?: number; y?: number; width?: number; height?: number; targetTitle?: string; needsConfirm: boolean };
+export type PlanAction = { type: string; agent?: string; text?: string; address?: string; x?: number; y?: number; width?: number; height?: number; workspace?: number; targetTitle?: string; needsConfirm: boolean };
 
 export const actionLabel = (a: PlanAction) =>
-  a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "move" ? `Move ${a.targetTitle ?? a.address} (${a.address}) to ${a.x}, ${a.y}` : a.type === "resize" ? `Resize ${a.targetTitle ?? a.address} (${a.address}) to ${a.width} × ${a.height}` : a.type === "focus" ? `Focus ${a.agent}` : a.type === "stop" ? `Interrupt ${a.agent}` : `Status of ${a.agent}`;
+  a.type === "send" ? `Tell ${a.agent}: ${a.text}` : a.type === "move" ? `Move ${a.targetTitle ?? a.address} (${a.address}) to ${a.x}, ${a.y}` : a.type === "workspace" ? `Move ${a.targetTitle ?? a.address} to workspace ${a.workspace}` : a.type === "resize" ? `Resize ${a.targetTitle ?? a.address} (${a.address}) to ${a.width} × ${a.height}` : a.type === "focus" ? `Focus ${a.agent}` : a.type === "stop" ? `Interrupt ${a.agent}` : `Status of ${a.agent}`;
 
 /** Execute one plan action. Returns the result text, or null when it failed (already toasted). */
 export async function runAction(a: PlanAction, confirmed: boolean, _speakReplies = false): Promise<string | null> {

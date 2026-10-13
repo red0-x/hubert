@@ -27,7 +27,7 @@ Run both checks before opening a PR. CI (`.github/workflows/ci.yml`) runs them t
 ## Ground rules
 
 - **Local only.** Keep the loopback bind and the Host/Origin checks on every endpoint.
-- **No voice open/close.** Voice must never create or terminate windows or agents. Mutating actions need explicit confirmation and are revalidated against live state on the server.
+- **No voice open/close.** Voice must never create or terminate windows or agents. Send and stop need explicit confirmation (window move/resize/workspace are validated, bounded and run directly) and are revalidated against live state on the server.
 - **No surprise dependencies.** Open an issue before adding a package, service or font and say why the existing stack cannot do it.
 - **Tests for logic.** Parsers, planners and anything touching paths or commands get a test next to them.
 - **Honest docs.** If you could not test something, say so in the PR and the README's known limits.

@@ -81,10 +81,14 @@ export function listWindows(): Window[] {
 /** Pure command builder: no model-provided dispatcher names or unchecked arguments. */
 export function windowCommand(action: unknown, windows: Window[]): string[] {
   const a = action as Record<string, unknown> | null;
-  if (!a || (a.type !== "move" && a.type !== "resize")) throw new Error("unsupported window action");
+  if (!a || (a.type !== "move" && a.type !== "resize" && a.type !== "workspace")) throw new Error("unsupported window action");
   if (typeof a.address !== "string" || !/^0x[0-9a-f]+$/i.test(a.address) || !windows.some((w) => w.address === a.address))
     throw new Error("window is no longer available");
   const valid = (n: unknown, min: number, max: number) => typeof n === "number" && Number.isInteger(n) && n >= min && n <= max;
+  if (a.type === "workspace") {
+    if (!valid(a.workspace, 1, 100)) throw new Error("invalid workspace");
+    return ["hyprctl", "dispatch", "movetoworkspacesilent", `${a.workspace},address:${a.address}`];
+  }
   if (a.type === "move") {
     if (!valid(a.x, -10000, 10000) || !valid(a.y, -10000, 10000)) throw new Error("invalid window coordinates");
     return ["hyprctl", "dispatch", "movewindowpixel", `exact ${a.x} ${a.y},address:${a.address}`];
@@ -99,7 +103,7 @@ export async function statusOf(name: string): Promise<string> {
   return `${a.name} is ${a.state}${a.repo ? ` in ${basename(a.repo)}` : ""}${a.doing ? `. Last: ${a.doing}` : ""}`;
 }
 
-export const NEEDS_CONFIRM = new Set<Action["type"]>(["send", "stop", "move", "resize"]);
+export const NEEDS_CONFIRM = new Set<Action["type"]>(["send", "stop"]); // window arrangement (move/resize/workspace) is validated and runs without approval
 
 /** Interrupt a running jcode turn through the harness API. Other agents expose no inbound control. */
 export async function stopAgent(name: string): Promise<string> {
@@ -115,11 +119,12 @@ export async function execute(a: Action): Promise<string> {
     case "focus": return focusAgent(a.agent);
     case "send": return sendToAgent(a.agent, a.text);
     case "move":
-    case "resize": {
+    case "resize":
+    case "workspace": {
       const argv = windowCommand(a, listWindows());
       const result = run(argv);
       if (!result.ok || result.out !== "ok") throw new Error(`Hyprland refused ${a.type}: ${(result.err || result.out).slice(0, 200)}`);
-      return `${a.type === "move" ? "Moved" : "Resized"} window ${a.address}`;
+      return a.type === "workspace" ? `Moved window ${a.address} to workspace ${a.workspace}` : `${a.type === "move" ? "Moved" : "Resized"} window ${a.address}`;
     }
     case "status": return statusOf(a.agent);
     case "stop": return stopAgent(a.agent);

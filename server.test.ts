@@ -69,7 +69,7 @@ test("/api/execute returns 409 for unconfirmed send/stop and 400 for unknown age
   const deps = makeDeps({
     collect: collectStub,
     execute: (async (a: { type: string }) => `ran ${a.type}`) as unknown as Deps["execute"],
-    needsConfirm: new Set(["send", "stop", "move", "resize"]),
+    needsConfirm: new Set(["send", "stop"]),
   });
   const send = await executeRoute(post("/api/execute", JSON.stringify({ action: { type: "send", agent: "snail", text: "hi" } })), deps);
   expect(send.status).toBe(409);

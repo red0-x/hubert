@@ -262,3 +262,10 @@ test("findPane matches the whole agent word in tmux titles", () => {
   expect(findPane(panes, "snake")).toBeNull();
   expect(findPane(panes, "mouse")).toBeNull();
 });
+
+test("workspace action builds a safe hyprctl command and validates range/address", () => {
+  const windows = [{ address: "0xabcdef123", title: "Editor", class: "kitty", workspace: 2 }];
+  expect(windowCommand({ type: "workspace", address: "0xabcdef123", workspace: 4 }, windows)).toEqual(["hyprctl", "dispatch", "movetoworkspacesilent", "4,address:0xabcdef123"]);
+  for (const bad of [{ workspace: 0 }, { workspace: 101 }, { workspace: 1.5 }, { workspace: "2;exec" }, { workspace: 2, address: "0x9999" }]) expect(() => windowCommand({ type: "workspace", address: "0xabcdef123", ...bad }, windows)).toThrow();
+  expect(parsePlan(JSON.stringify({ actions: [{ type: "workspace", address: "0xabcdef123", workspace: 3 }] }), { agents: [], repos: [], windows }).actions).toEqual([{ type: "workspace", address: "0xabcdef123", workspace: 3 }]);
+});
