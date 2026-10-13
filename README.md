@@ -66,7 +66,7 @@ Interrupting needs the jcode harness bridge. `hubert.sh` starts `jcode api-bridg
 
 ## Voice control
 
-Hold the mic button (or your shortcut) and speak. Simple requests such as focusing an agent or asking for status use a fast grammar. Anything else can go to a tool-less jcode model that proposes a plan, which Hubert checks against live agents and windows before running it.
+Hold the mic button (or your shortcut) and speak. Simple requests such as focusing an agent or asking for status use a fast grammar. Anything else goes to **DeepSeek Flash through jcode**, without model tools: it proposes a short plan, which Hubert checks against live agents and windows before running it. `HUBERT_BRAIN_MODEL` and `HUBERT_BRAIN_PROVIDER` still override the default. If the DeepSeek route is unavailable, Hubert reports that rather than silently choosing another paid model.
 
 - Focus and status run immediately. Sending a message, interrupting an agent, and moving or resizing a window need a click on **Do it**.
 - Hubert does **not** open or close windows or agents by voice. Hyprland arrangement is limited to validated move and resize.
@@ -129,7 +129,7 @@ The server binds to loopback and rejects foreign `Host` and `Origin` headers. Lo
 - Focus works for jcode agents in titled tmux panes. Other agents are shown but cannot be focused, messaged or interrupted.
 - The command list reads jcode, Claude Code and Codex journals. Codex records shell calls as JS cells, so their duration is shown but ok/failed only when the cell itself errored (the exec exit code is not in the transcript). Omp, Pi, OpenCode and Cursor appear in the agent list and in changed files by working directory only.
 - Voice has been tested with a local Whisper socket. Groq, OpenAI and Deepgram are covered by mock-server tests only.
-- Mic permission and the in-app shortcut were checked in the WebKitGTK window, but no end-to-end transcription (no speech connector is configured on the dev machine).
+- Recorded-clip transcription has been checked through the warm local Whisper socket with synthesized speech. Real microphone capture through the current WebKitGTK window remains unverified.
 - Global push to talk is wired end to end (CLI -> server -> SSE -> window) and unit tested, but the actual Hyprland keybind has not been tried on a real session.
 
 ## Roadmap
