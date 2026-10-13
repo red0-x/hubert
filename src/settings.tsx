@@ -92,7 +92,7 @@ function VoiceTuning({ preferences, onChange, audio }: { preferences: Preference
         {audio.sinks.map(d => <option key={d.name} value={d.name}>{d.description}</option>)}
       </select>
     </div> : null}
-    {(voices.length > 0 || !audio?.tts) && <div className="space-y-1">
+    {(voices.length > 0 && !audio?.tts) && <div className="space-y-1">
       <label htmlFor="speak-voice" className="text-sm font-medium">Voice</label>
       <select id="speak-voice" value={preferences.speakVoice ?? ""} onChange={event => onChange({ ...preferences, speakVoice: event.target.value || null })}
         className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">

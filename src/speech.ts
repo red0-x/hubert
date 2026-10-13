@@ -86,7 +86,7 @@ export function speechListening(): boolean { return listening; }
 /** Cancel any in-flight utterance. Safe where speech is unsupported. */
 export function stopSpeech(g: SpeechGlobal | undefined = defaultGlobal()): void {
   try { g?.speechSynthesis?.cancel?.(); } catch {}
-  if (typeof window !== "undefined" && (g as unknown) === window && !speechSupported(g)) void fetch("/api/speak", { method: "DELETE" }).catch(() => {});
+  if (typeof window !== "undefined" && (g as unknown) === window) void fetch("/api/speak", { method: "DELETE" }).catch(() => {});
 }
 
 export type SpeakOptions = { kind?: SpeakKind; pitch?: number; rate?: number; voice?: string | null; sink?: string | null; now?: number };
@@ -103,9 +103,9 @@ function resolveVoice(g: SpeechGlobal, wanted: string | null | undefined): Speec
 export function speak(text: string, g: SpeechGlobal | undefined = defaultGlobal(), opts: SpeakOptions = {}): void {
   const chosen = speakableText(text, opts.kind ?? "answer");
   if (!chosen || listening) return;
-  const native = !!g && speechSupported(g);
-  // WebKitGTK has no speech synthesis: fall back to the local server (espeak-ng) in the real window only.
-  const useServer = !native && typeof window !== "undefined" && (g as unknown) === window;
+  // In the real window always use the server voice (Piper): WebKitGTK's own speechSynthesis is a robotic espeak.
+  const useServer = typeof window !== "undefined" && (g as unknown) === window;
+  const native = !useServer && !!g && speechSupported(g);
   if (!g || (!native && !useServer)) return;
   const now = opts.now ?? Date.now();
   const key = (g ?? defaultKey) as object;
