@@ -70,6 +70,7 @@ export function speakableText(text: string, kind: SpeakKind = "answer"): string 
 }
 
 // Per-global dedupe state so tests with fresh globals stay isolated.
+const defaultKey = {};
 const lastSpoken = new WeakMap<object, { text: string; at: number }>();
 
 let listening = false;
@@ -85,9 +86,10 @@ export function speechListening(): boolean { return listening; }
 /** Cancel any in-flight utterance. Safe where speech is unsupported. */
 export function stopSpeech(g: SpeechGlobal | undefined = defaultGlobal()): void {
   try { g?.speechSynthesis?.cancel?.(); } catch {}
+  if (typeof window !== "undefined" && (g as unknown) === window && !speechSupported(g)) void fetch("/api/speak", { method: "DELETE" }).catch(() => {});
 }
 
-export type SpeakOptions = { kind?: SpeakKind; pitch?: number; rate?: number; voice?: string | null; now?: number };
+export type SpeakOptions = { kind?: SpeakKind; pitch?: number; rate?: number; voice?: string | null; sink?: string | null; now?: number };
 
 function resolveVoice(g: SpeechGlobal, wanted: string | null | undefined): SpeechVoice | undefined {
   if (!wanted) return undefined;
@@ -100,11 +102,20 @@ function resolveVoice(g: SpeechGlobal, wanted: string | null | undefined): Speec
  */
 export function speak(text: string, g: SpeechGlobal | undefined = defaultGlobal(), opts: SpeakOptions = {}): void {
   const chosen = speakableText(text, opts.kind ?? "answer");
-  if (!chosen || !g || !speechSupported(g) || listening) return;
+  if (!chosen || listening) return;
+  const native = !!g && speechSupported(g);
+  // WebKitGTK has no speech synthesis: fall back to the local server (espeak-ng) in the real window only.
+  const useServer = !native && typeof window !== "undefined" && (g as unknown) === window;
+  if (!g || (!native && !useServer)) return;
   const now = opts.now ?? Date.now();
-  const prev = lastSpoken.get(g as object);
+  const key = (g ?? defaultKey) as object;
+  const prev = lastSpoken.get(key);
   if (prev && prev.text === chosen && now - prev.at < DUPLICATE_WINDOW_MS) return;
-  lastSpoken.set(g as object, { text: chosen, at: now });
+  lastSpoken.set(key, { text: chosen, at: now });
+  if (useServer) {
+    void fetch("/api/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: chosen, pitch: opts.pitch, rate: opts.rate, sink: opts.sink ?? null }) }).catch(() => {});
+    return;
+  }
   try {
     g.speechSynthesis!.cancel?.();
     const utterance = new g.SpeechSynthesisUtterance!(chosen);
@@ -120,8 +131,8 @@ export function speak(text: string, g: SpeechGlobal | undefined = defaultGlobal(
 export function speakReply(
   text: string,
   kind: SpeakKind,
-  prefs?: Pick<Preferences, "speakVoice" | "speakPitch" | "speakRate">,
+  prefs?: Pick<Preferences, "speakVoice" | "speakPitch" | "speakRate" | "speakSink">,
   g: SpeechGlobal | undefined = defaultGlobal(),
 ): void {
-  speak(text, g, { kind, voice: prefs?.speakVoice, pitch: prefs?.speakPitch, rate: prefs?.speakRate });
+  speak(text, g, { kind, voice: prefs?.speakVoice, pitch: prefs?.speakPitch, rate: prefs?.speakRate, sink: prefs?.speakSink });
 }

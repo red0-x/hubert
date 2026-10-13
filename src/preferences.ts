@@ -5,6 +5,8 @@ export type Preferences = {
   notifyAlerts: boolean;
   /** Installed voice chosen by voiceURI (or name fallback). null = engine default. Never guessed from the name. */
   speakVoice: string | null;
+  /** PipeWire sink name for spoken replies. null = system default output. */
+  speakSink: string | null;
   /** Playback pitch. Bounded so a malformed stored value cannot make Hubert unlistenable. */
   speakPitch: number;
   /** Playback rate. Bounded, same reason. */
@@ -24,6 +26,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   speakReplies: false,
   notifyAlerts: false,
   speakVoice: null,
+  speakSink: null,
   speakPitch: SPEAK_PITCH_DEFAULT,
   speakRate: SPEAK_RATE_DEFAULT,
 };
@@ -45,6 +48,7 @@ export function parsePreferences(raw: string | null): Preferences {
     speakReplies: value.speakReplies === true,
     notifyAlerts: value.notifyAlerts === true,
     speakVoice: typeof value.speakVoice === "string" && value.speakVoice.trim().length > 0 && value.speakVoice.length <= 200 ? value.speakVoice : null,
+    speakSink: typeof value.speakSink === "string" && value.speakSink.length > 0 && value.speakSink.length <= 200 ? value.speakSink : null,
     speakPitch: clampSpeechPitch(value.speakPitch),
     speakRate: clampSpeechRate(value.speakRate),
   };

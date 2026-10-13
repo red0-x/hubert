@@ -64,8 +64,17 @@ function RangeControl({ label, value, min, max, onChange }: {
   </div>;
 }
 
+type Audio = { sinks: { name: string; description: string }[]; sources: { name: string; description: string }[]; defaultSink: string | null; defaultSource: string | null; tts: boolean };
+
+function useAudio() {
+  const [audio, setAudio] = useState<Audio | null>(null);
+  const load = useCallback(() => { fetch("/api/audio").then(r => r.json()).then(setAudio, () => setAudio(null)); }, []);
+  useEffect(load, [load]);
+  return { audio, load };
+}
+
 /** Voice picker plus pitch/rate. Lists the voices the engine actually reports, by name and lang. */
-function VoiceTuning({ preferences, onChange }: { preferences: Preferences; onChange: (p: Preferences) => void }) {
+function VoiceTuning({ preferences, onChange, audio }: { preferences: Preferences; onChange: (p: Preferences) => void; audio: Audio | null }) {
   const [voices, setVoices] = useState<SpeechVoice[]>(() => listVoices());
   useEffect(() => {
     const refresh = () => setVoices(listVoices());
@@ -75,7 +84,15 @@ function VoiceTuning({ preferences, onChange }: { preferences: Preferences; onCh
     return () => synth?.removeEventListener?.("voiceschanged", refresh);
   }, []);
   return <div className="space-y-3">
-    <div className="space-y-1">
+    {audio?.sinks.length ? <div className="space-y-1">
+      <label htmlFor="speak-sink" className="text-sm font-medium">Speaker</label>
+      <select id="speak-sink" value={preferences.speakSink ?? ""} onChange={event => onChange({ ...preferences, speakSink: event.target.value || null })}
+        className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <option value="">System default</option>
+        {audio.sinks.map(d => <option key={d.name} value={d.name}>{d.description}</option>)}
+      </select>
+    </div> : null}
+    {(voices.length > 0 || !audio?.tts) && <div className="space-y-1">
       <label htmlFor="speak-voice" className="text-sm font-medium">Voice</label>
       <select id="speak-voice" value={preferences.speakVoice ?? ""} onChange={event => onChange({ ...preferences, speakVoice: event.target.value || null })}
         className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -83,7 +100,7 @@ function VoiceTuning({ preferences, onChange }: { preferences: Preferences; onCh
         {voices.map(v => <option key={v.voiceURI ?? v.name} value={v.voiceURI ?? v.name}>{v.name} · {v.lang}</option>)}
       </select>
       <p className="text-xs text-muted-foreground">{voices.length ? `${voices.length} installed ${voices.length === 1 ? "voice" : "voices"} reported by this engine.` : "No installed voices reported yet; the engine will use its default."}</p>
-    </div>
+    </div>}
     <RangeControl label="Pitch" value={preferences.speakPitch} min={SPEAK_PITCH_MIN} max={SPEAK_PITCH_MAX} onChange={v => onChange({ ...preferences, speakPitch: v })} />
     <RangeControl label="Rate" value={preferences.speakRate} min={SPEAK_RATE_MIN} max={SPEAK_RATE_MAX} onChange={v => onChange({ ...preferences, speakRate: v })} />
   </div>;
@@ -94,7 +111,9 @@ export function SettingsWindow({ open, onClose, preferences, onChange, connector
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [capturing, setCapturing] = useState(false);
-  const speechIssue = speechDiagnostic();
+  const { audio, load } = useAudio();
+  const speechIssue = audio?.tts ? null : speechDiagnostic();
+  const setMic = (name: string) => { fetch("/api/audio/source", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then(load, load); };
   useEffect(() => {
     if (open) dialog.current?.showModal();
     else { dialog.current?.close(); setCapturing(false); }
@@ -112,6 +131,14 @@ export function SettingsWindow({ open, onClose, preferences, onChange, connector
           <span><span className="block text-sm font-medium">{mode === "hold" ? "Hold to talk" : "Toggle to talk"}</span><span className="text-xs text-muted-foreground">{mode === "hold" ? "Record while the mic button or shortcut is held." : "Press once to start, again to stop and transcribe."}</span></span>
         </label>)}
       </fieldset>
+      {audio?.sources.length ? <section className="space-y-1">
+        <label htmlFor="mic-device" className="text-sm font-medium">Microphone</label>
+        <select id="mic-device" value={audio.defaultSource ?? ""} onChange={event => setMic(event.target.value)}
+          className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {audio.sources.map(d => <option key={d.name} value={d.name}>{d.description}</option>)}
+        </select>
+        <p className="text-xs text-muted-foreground">Sets the system default input (applies to the next recording).</p>
+      </section> : null}
       <section className="space-y-2">
         <h3 className="text-sm font-medium">Spoken replies</h3>
         {speechIssue ? <p role="note" className="rounded-lg border p-3 text-xs text-muted-foreground">{speechIssue}</p> : <>
@@ -119,7 +146,7 @@ export function SettingsWindow({ open, onClose, preferences, onChange, connector
             <span><span className="block text-sm font-medium">Speak replies</span><span className="text-xs text-muted-foreground">Read voice responses and status answers aloud.</span></span>
             <input type="checkbox" checked={preferences.speakReplies} onChange={event => onChange({ ...preferences, speakReplies: event.target.checked })} className="size-4 accent-current" />
           </label>
-          {preferences.speakReplies && <div className="rounded-lg border p-3"><VoiceTuning preferences={preferences} onChange={onChange} /></div>}
+          {preferences.speakReplies && <div className="rounded-lg border p-3"><VoiceTuning preferences={preferences} onChange={onChange} audio={audio} /></div>}
         </>}
       </section>
       {notificationsSupported() && <section className="space-y-2">

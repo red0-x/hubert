@@ -7,6 +7,7 @@ import { NEEDS_CONFIRM, execute, listWindows } from "./voice/actions";
 import { describe, parseIntent } from "./voice/intent";
 import { isPttAction, resolvePtt, type PttState } from "./voice/ptt";
 import { ensureClientBundle, type Client } from "./client-build";
+import { audioDevices, setDefaultSource, speakTts, stopTts } from "./voice/tts";
 import { buildReport, realEnv } from "./doctor";
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
@@ -229,6 +230,21 @@ export const routes: RouteTable = {
           return new Response((e as Error).message, { status: 502 });
         }
       },
+    },
+    "/api/audio": async (req) => guard(req) ?? Response.json(await audioDevices()),
+    "/api/audio/source": { POST: async (req) => {
+      const denied = guard(req); if (denied) return denied;
+      const { name } = (await req.json().catch(() => ({}))) as { name?: string };
+      return typeof name === "string" && await setDefaultSource(name) ? Response.json({ ok: true }) : new Response("unknown source", { status: 400 });
+    } },
+    "/api/speak": {
+      POST: async (req) => {
+        const denied = guard(req); if (denied) return denied;
+        const b = (await req.json().catch(() => ({}))) as { text?: string; pitch?: number; rate?: number; sink?: string | null };
+        if (!b.text?.trim() || b.text.length > 700) return new Response("text required (max 700 chars)", { status: 400 });
+        return (await speakTts(b.text, Number(b.pitch ?? 1.5), Number(b.rate ?? 1), typeof b.sink === "string" ? b.sink : null)) ? Response.json({ ok: true }) : new Response("espeak-ng/paplay missing", { status: 501 });
+      },
+      DELETE: (req) => { const denied = guard(req); if (denied) return denied; stopTts(); return Response.json({ ok: true }); },
     },
     "/api/execute": {
       POST: (req) => executeRoute(req),
