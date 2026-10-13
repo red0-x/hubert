@@ -43,8 +43,13 @@ function terminal(): string[] | null {
 export function guard(req: Request, allowedHosts: Set<string> = ALLOWED_HOSTS): Response | null {
   if (!allowedHosts.has(req.headers.get("host") ?? "")) return new Response("bad host", { status: 403 });
   const origin = req.headers.get("origin");
-  if (origin && !allowedHosts.has(new URL(origin).host)) return new Response("bad origin", { status: 403 });
+  if (origin && !isAllowedOrigin(origin, allowedHosts)) return new Response("bad origin", { status: 403 });
   return null;
+}
+
+/** A malformed or opaque Origin ("null" from a sandboxed iframe or a data:/file: page) is never ours. */
+function isAllowedOrigin(origin: string, allowedHosts: Set<string>): boolean {
+  try { return allowedHosts.has(new URL(origin).host); } catch { return false; }
 }
 
 // Optional sprite PNGs live in ./mascot (gitignored, except its README). Flat filenames only.

@@ -33,11 +33,15 @@ export function canSend(source: Agent["source"]): source is SendSource {
   return source in BUILDERS;
 }
 
+/** A session id is one argv element, so a leading "-" would be read as an option by the agent's own CLI. */
+export const isSafeSessionId = (id: unknown): id is string =>
+  typeof id === "string" && id.trim() !== "" && !id.startsWith("-");
+
 /** Pure. Throws rather than returning a command that could not work. */
 export function sendArgv(source: Agent["source"], id: string, text: string): string[] {
   const build = (BUILDERS as Record<string, ((id: string, text: string) => string[]) | undefined>)[source];
   if (!build) throw new Error(`${source} agents expose no non-interactive send`);
-  if (typeof id !== "string" || !id.trim()) throw new Error("missing session id");
+  if (!isSafeSessionId(id)) throw new Error("missing or unusable session id");
   if (typeof text !== "string" || !text.trim()) throw new Error("empty message");
   return build(id, text);
 }

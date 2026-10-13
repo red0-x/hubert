@@ -4,14 +4,16 @@ import { basename } from "path";
 import type { Action } from "./brain";
 import { collect } from "../state";
 import { cancelTurn } from "./sdk";
-import { dispatchSend } from "./send-adapters";
+import { dispatchSend, isSafeSessionId } from "./send-adapters";
 
 export type Pane = { session: string; window: string; title: string };
 export type Window = { address: string; title: string; class: string; workspace: number };
 
 /** tmux pane title "🌐 jcode Snail · +42 -0" -> match by whole word "jcode <Name>". Pure so it can be tested. */
 export function findPane(panes: Pane[], shortName: string): Pane | null {
-  const re = new RegExp(`\\bjcode ${shortName.replace(/[^a-z0-9]/gi, "")}\\b`, "i");
+  const word = shortName.replace(/[^a-z0-9]/gi, "");
+  if (!word) return null; // a name with no alphanumerics would match every "jcode ..." pane
+  const re = new RegExp(`\\bjcode ${word}\\b`, "i");
   return panes.find((p) => re.test(p.title)) ?? null;
 }
 
@@ -54,6 +56,7 @@ export function focusAgent(name: string): string {
 export async function sendToAgent(name: string, text: string): Promise<string> {
   const a = (await collect()).agents.find((x) => x.name === name && (x.state === "working" || x.state === "idle"));
   if (!a) throw new Error(`${name} is not a running agent`);
+  if (!isSafeSessionId(a.id)) throw new Error(`${name} has a session id that cannot be resumed safely`);
   if (a.source === "jcode") {
     const r = run(["jcode", "--quiet", "--no-update", "--no-selfdev", "transcript", "--session", a.id, "--mode", "send", text], tmpdir());
     if (!r.ok) throw new Error(`jcode transcript failed: ${(r.err || r.out).slice(0, 200)}`);
