@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DEFAULT_PREFERENCES, parsePreferences, PREFERENCES_KEY, shortcutLabel, validShortcut, type Preferences } from "./preferences";
+import { speechSupported } from "./speech";
 
 export function usePreferences() {
   const [preferences, setPreferences] = useState<Preferences>(() => {
@@ -33,6 +34,12 @@ export function SettingsWindow({ open, onClose, preferences, onChange, connector
           <span><span className="block text-sm font-medium">{mode === "hold" ? "Hold to talk" : "Toggle to talk"}</span><span className="text-xs text-muted-foreground">{mode === "hold" ? "Record while the mic button or shortcut is held." : "Press once to start, again to stop and transcribe."}</span></span>
         </label>)}
       </fieldset>
+      {speechSupported() && <section className="space-y-2">
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-3">
+          <span><span className="block text-sm font-medium">Speak replies</span><span className="text-xs text-muted-foreground">Read voice responses and status answers aloud.</span></span>
+          <input type="checkbox" checked={preferences.speakReplies} onChange={event => onChange({ ...preferences, speakReplies: event.target.checked })} className="size-4 accent-current" />
+        </label>
+      </section>}
       <section className="space-y-2">
         <label htmlFor="voice-shortcut" className="text-sm font-medium">Keyboard shortcut</label>
         <div className="flex gap-2">

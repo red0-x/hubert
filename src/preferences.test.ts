@@ -4,8 +4,17 @@ import { DEFAULT_PREFERENCES, parsePreferences, shortcutLabel, validShortcut } f
 test("preferences survive malformed or legacy storage without enabling unsupported behavior", () => {
   for (const raw of [null, "not json", "null", "[]", '{"voiceMode":"always-on","shortcut":"Escape"}'])
     expect(parsePreferences(raw)).toEqual(DEFAULT_PREFERENCES);
-  expect(parsePreferences('{"voiceMode":"toggle","shortcut":"KeyV"}')).toEqual({ voiceMode: "toggle", shortcut: "KeyV" });
-  expect(parsePreferences('{"shortcut":null}')).toEqual({ voiceMode: "hold", shortcut: null });
+  expect(parsePreferences('{"voiceMode":"toggle","shortcut":"KeyV"}')).toEqual({ voiceMode: "toggle", shortcut: "KeyV", speakReplies: false });
+  expect(parsePreferences('{"shortcut":null}')).toEqual({ voiceMode: "hold", shortcut: null, speakReplies: false });
+});
+
+test("speak replies default off and only persist as a strict boolean", () => {
+  expect(parsePreferences(null).speakReplies).toBe(false);
+  expect(parsePreferences('{"speakReplies":"yes"}').speakReplies).toBe(false);
+  expect(parsePreferences('{"speakReplies":1}').speakReplies).toBe(false);
+  expect(parsePreferences('{"voiceMode":"toggle"}').speakReplies).toBe(false);
+  expect(parsePreferences('{"speakReplies":true}').speakReplies).toBe(true);
+  expect(parsePreferences('{"speakReplies":true,"voiceMode":"toggle","shortcut":"KeyV"}')).toEqual({ voiceMode: "toggle", shortcut: "KeyV", speakReplies: true });
 });
 
 test("shortcut capture accepts deliberate non-modifier keys and displays readable labels", () => {
