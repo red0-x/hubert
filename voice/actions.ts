@@ -4,6 +4,7 @@ import { basename } from "path";
 import type { Action } from "./brain";
 import { collect } from "../state";
 import { cancelTurn } from "./sdk";
+import { dispatchSend } from "./send-adapters";
 
 export type Pane = { session: string; window: string; title: string };
 export type Window = { address: string; title: string; class: string; workspace: number };
@@ -51,10 +52,15 @@ export function focusAgent(name: string): string {
 }
 
 export function sendToAgent(name: string, text: string): string {
-  const a = collect().agents.find((x) => x.name === name && (x.state === "working" || x.state === "idle") && x.source === "jcode");
-  if (!a) throw new Error(`${name} is not a running jcode agent`);
-  const r = run(["jcode", "--quiet", "--no-update", "--no-selfdev", "transcript", "--session", a.id, "--mode", "send", text], tmpdir());
-  if (!r.ok) throw new Error(`jcode transcript failed: ${(r.err || r.out).slice(0, 200)}`);
+  const a = collect().agents.find((x) => x.name === name && (x.state === "working" || x.state === "idle"));
+  if (!a) throw new Error(`${name} is not a running agent`);
+  if (a.source === "jcode") {
+    const r = run(["jcode", "--quiet", "--no-update", "--no-selfdev", "transcript", "--session", a.id, "--mode", "send", text], tmpdir());
+    if (!r.ok) throw new Error(`jcode transcript failed: ${(r.err || r.out).slice(0, 200)}`);
+    return `Sent to ${name}`;
+  }
+  // Other agents: resume the session through their own CLI, non-interactively (voice/send-adapters.ts).
+  dispatchSend(a, text);
   return `Sent to ${name}`;
 }
 

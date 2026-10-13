@@ -44,7 +44,7 @@ bun install
 ./hubert.sh
 ```
 
-`hubert.sh` starts the local server on `127.0.0.1:7777` and opens the window. Running it again focuses the existing window. Optional: [ffmpeg](https://ffmpeg.org) for voice input, tmux for focusing agents, [lazygit](https://github.com/jesseduffield/lazygit) for the lazygit button, Hyprland for window arrangement.
+`hubert.sh` starts the local server on `127.0.0.1:7777` and opens the window. Running it again focuses the existing window. Optional: run `./install.sh` once to add a user-level desktop launcher (it writes only `~/.local/share/applications/hubert.desktop`, nothing system-wide, and does not start Hubert). Optional: [ffmpeg](https://ffmpeg.org) for voice input, tmux for focusing agents, [lazygit](https://github.com/jesseduffield/lazygit) for the lazygit button, Hyprland for window arrangement.
 
 macOS has no WebKitGTK window yet. Run `bun start` and open `http://127.0.0.1:7777`. This is untested.
 
@@ -53,14 +53,14 @@ macOS has no WebKitGTK window yet. Run `bun start` and open `http://127.0.0.1:77
 | Agent | Shows up | Focus (tmux) | Send message | Interrupt | Verified |
 | --- | --- | --- | --- | --- | --- |
 | [jcode](https://github.com/1jehuang/jcode) | `~/.jcode` | yes | yes | yes, via the [jcode SDK](https://www.npmjs.com/package/@1jehuang/jcode-sdk) | live |
-| [Claude Code](https://claude.com/claude-code) | `~/.claude/projects` | no | no | no | real files |
-| [Codex](https://github.com/openai/codex) | `~/.codex/sessions` | no | no | no | real rollout file |
-| [oh-my-pi](https://github.com/can1357/oh-my-pi) | `~/.omp/agent/sessions` | no | no | no | docs only |
-| [Pi](https://pi.dev) | `~/.pi/agent/sessions` | no | no | no | docs only |
-| [OpenCode](https://opencode.ai) | `~/.local/share/opencode/opencode.db` (1.17+) | no | no | no | docs only |
+| [Claude Code](https://claude.com/claude-code) | `~/.claude/projects` | no | yes, `claude -p --resume` | no | real files |
+| [Codex](https://github.com/openai/codex) | `~/.codex/sessions` | no | yes, `codex exec resume` | no | real rollout file |
+| [oh-my-pi](https://github.com/can1357/oh-my-pi) | `~/.omp/agent/sessions` | no | yes, `omp --print --resume` | no | docs only |
+| [Pi](https://pi.dev) | `~/.pi/agent/sessions` | no | yes, `pi --print --session` | no | docs only |
+| [OpenCode](https://opencode.ai) | `~/.local/share/opencode/opencode.db` (1.17+) | no | yes, `opencode run --session` | no | docs only |
 | [Cursor](https://cursor.com) | `~/.cursor/projects/*/agent-transcripts` | no | no | no | docs only |
 
-Only jcode exposes an inbound control API, so message and interrupt are jcode-only for now. "Docs only" means the reader follows the published session layout but has not been run against a real install. If one breaks for you, open an issue with a redacted sample line.
+Message sending runs behind the same confirm gate as everything that changes things. jcode goes through its harness transcript; the other agents are resumed non-interactively through their own CLI (`claude -p --resume`, `codex exec resume`, `omp --print --resume`, `pi --print --session`, `opencode run --session`) in the agent's working directory. The Claude Code and Codex commands come from their installed `--help`; the others follow published docs. None has been run against a real session, so a resumed turn may still ask for approval or refuse when the session is already running. Interrupt remains jcode-only.
 
 Interrupting needs the jcode harness bridge. `hubert.sh` starts `jcode api-bridge` for you if it is not already running.
 
@@ -83,9 +83,29 @@ Hold the mic button (or your shortcut) and speak. Simple requests such as focusi
 
 Cloud providers also need `GROQ_API_KEY`, `OPENAI_API_KEY` or `DEEPGRAM_API_KEY`. Add a connector in [`voice/stt.ts`](voice/stt.ts).
 
+### Global push to talk
+
+A window-manager keybind can start and stop recording while Hubert is not focused. `hubert.sh ptt` POSTs to the local server, which broadcasts the state to every open window over SSE:
+
+```sh
+/path/to/hubert/hubert.sh ptt toggle   # or start / stop
+```
+
+On Hyprland, bind a toggle key, or a hold key with press and release:
+
+```
+# toggle
+bind = SUPER, V, exec, /path/to/hubert/hubert.sh ptt toggle
+# or hold: press records, release transcribes
+bind = SUPER, V, exec, /path/to/hubert/hubert.sh ptt start
+bindr = SUPER, V, exec, /path/to/hubert/hubert.sh ptt stop
+```
+
+The server must already be running (`./hubert.sh`). Other window managers work the same way as long as they can run a command on key press.
+
 ## Settings
 
-Click the gear in the header. Pick **hold to talk** or **toggle to talk** and rebind the shortcut. The shortcut works only while Hubert is focused. A system-wide shortcut is on the roadmap.
+Click the gear in the header. Pick **hold to talk** or **toggle to talk** and rebind the in-app shortcut. The shortcut works only while Hubert is focused. For a system-wide key, bind [`hubert.sh ptt`](#global-push-to-talk) in your window manager.
 
 ## Configuration
 
@@ -110,10 +130,11 @@ The server binds to loopback and rejects foreign `Host` and `Origin` headers. Lo
 - The command list reads only jcode and Claude Code journals. The change map also counts Codex patch edits. Omp, Pi, OpenCode and Cursor appear in the agent list and in changed files by working directory only.
 - Voice has been tested with a local Whisper socket. Groq, OpenAI and Deepgram are covered by mock-server tests only.
 - Mic permission and the in-app shortcut were checked in the WebKitGTK window, but no end-to-end transcription (no speech connector is configured on the dev machine).
+- Global push to talk is wired end to end (CLI -> server -> SSE -> window) and unit tested, but the actual Hyprland keybind has not been tried on a real session.
 
 ## Roadmap
 
-Global push to talk through a Hyprland keybind · per-agent edit attribution · agent-to-agent relay with loop guards · richer command history and stats · macOS window · command and edit parsing for Codex, omp, Pi, OpenCode and Cursor · message and interrupt for agents that gain a control API.
+Per-agent edit attribution · agent-to-agent relay with loop guards · richer command history and stats · macOS window · command and edit parsing for Codex, omp, Pi, OpenCode and Cursor · message and interrupt for agents that gain a control API.
 
 ## Contributing
 
